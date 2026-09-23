@@ -28,7 +28,7 @@ implementation details.
 
 ### [`gui-player/`](gui-player/)
 Player with a graphical interface (egui/eframe, Windows and Linux). It opens a
-composition and shows its metadata, its samples and patterns (with a step grid
+composition and shows its metadata, its samples (each can be auditioned) and patterns (with a step grid
 for each pattern) and the arrangement with per-track mute, and plays it with a
 transport ribbon and a cursor. Exporting to WAV from the interface is still to
 come. See [`gui-player/specs/`](gui-player/specs/).

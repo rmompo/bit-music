@@ -1,12 +1,14 @@
-//! The top row of the window: A (metadata), B (tabbed lists of samples and
-//! patterns, names only) and C (properties of whatever is selected in B or
-//! in the arrangement).
+//! The top row of the window: B (tabs Metadata / Samples / Patterns) and C
+//! (properties of whatever is selected in B or in the arrangement).
 
 use eframe::egui::{self, Color32, RichText, Sense, Vec2};
+use egui_phosphor::regular;
 
 use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
+use crate::transport::Transport;
+use crate::widgets::IconButton;
 use crate::view::{ListTab, Selection, ViewState};
 
 pub const OK_COLOR: Color32 = Color32::from_rgb(90, 190, 110);
@@ -14,14 +16,13 @@ pub const ERR_COLOR: Color32 = Color32::from_rgb(230, 90, 90);
 
 /// Minimum width of the key column in property tables, so tables stacked
 /// in one panel line their values up.
-const MIN_KEY_WIDTH: f32 = 130.0;
+pub const MIN_KEY_WIDTH: f32 = 130.0;
 
-/// A | B | C, each with its own vertical scroll.
-pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
-    ui.columns(3, |cols| {
-        scroll(&mut cols[0], "metadata_scroll", |ui| metadata(ui, l));
-        lists(&mut cols[1], l, view);
-        scroll(&mut cols[2], "properties_scroll", |ui| properties(ui, l, view));
+/// B | C, each with its own vertical scroll.
+pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
+    ui.columns(2, |cols| {
+        lists(&mut cols[0], l, view, transport);
+        scroll(&mut cols[1], "properties_scroll", |ui| properties(ui, l, view));
     });
 }
 
@@ -43,10 +44,9 @@ fn chip(ui: &mut egui::Ui, color: Color32) {
     ui.painter().rect_filled(rect, 2.0, color);
 }
 
-/// Area A: composition metadata.
+/// The Metadata tab of B: composition metadata.
 pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
     let m = &l.project.composition.metadata;
-    ui.heading("Metadata");
     egui::Grid::new("metadata_grid")
         .num_columns(2)
         .min_col_width(MIN_KEY_WIDTH)
@@ -83,11 +83,12 @@ pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
     }
 }
 
-/// Area B: tabs (Samples / Patterns) over a list of names. Clicking a name
+/// Area B: tabs (Metadata / Samples / Patterns). Clicking a name in a list
 /// selects it, and area C shows its properties.
-pub fn lists(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
+pub fn lists(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
     let c = &l.project.composition;
     ui.horizontal(|ui| {
+        ui.selectable_value(&mut view.tab, ListTab::Metadata, "Metadata");
         ui.selectable_value(
             &mut view.tab,
             ListTab::Samples,
@@ -102,16 +103,23 @@ pub fn lists(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
     ui.separator();
 
     scroll(ui, "list_scroll", |ui| match view.tab {
-        ListTab::Samples => sample_list(ui, l, view),
-        ListTab::Patterns => pattern_list(ui, l, view),
+        ListTab::Metadata => metadata(ui, l),
+        ListTab::Samples => sample_list(ui, l, view, transport),
+        ListTab::Patterns => pattern_list(ui, l, view, transport),
     });
 }
 
-fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
+fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
     for (sample, report) in l.project.composition.samples.iter().zip(&l.sample_reports) {
         let selected = matches!(&view.selection, Selection::Sample(id) if *id == sample.id);
         let color = view.sample_colors.get(&sample.id).copied().unwrap_or(Color32::GRAY);
         ui.horizontal(|ui| {
+            let play = ui
+                .add_enabled(transport.can_preview_sample(&sample.id), IconButton::new(regular::PLAY))
+                .on_hover_text("Play the sample");
+            if play.clicked() {
+                transport.preview_sample(&sample.id);
+            }
             chip(ui, color);
             let mut text = RichText::new(&sample.id);
             if report.outcome.is_err() {
@@ -124,11 +132,17 @@ fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
     }
 }
 
-fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState) {
+fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
     for pattern in &l.project.composition.patterns {
         let selected = matches!(&view.selection, Selection::Pattern(id) if *id == pattern.id);
         let color = view.pattern_color(l, &pattern.id);
         ui.horizontal(|ui| {
+            let play = ui
+                .add_enabled(transport.can_preview_pattern(&pattern.id), IconButton::new(regular::PLAY))
+                .on_hover_text("Play the pattern");
+            if play.clicked() {
+                transport.preview_pattern(&pattern.id);
+            }
             chip(ui, color);
             if ui.selectable_label(selected, &pattern.id).clicked() {
                 view.selection = Selection::Pattern(pattern.id.clone());
@@ -285,6 +299,7 @@ mod tests {
     fn top_row_draws_for_every_kind_of_selection() {
         let l = demo();
         let mut view = ViewState::new(&l);
+        let t = Transport::new(&l);
         for selection in [
             Selection::None,
             Selection::Sample("sax".into()),
@@ -292,9 +307,11 @@ mod tests {
             Selection::Pattern("kickA".into()),
         ] {
             view.selection = selection;
-            egui::__run_test_ui(|ui| top_row(ui, &l, &mut view));
+            egui::__run_test_ui(|ui| top_row(ui, &l, &mut view, &t));
         }
-        view.tab = ListTab::Patterns;
-        egui::__run_test_ui(|ui| top_row(ui, &l, &mut view));
+        for tab in [ListTab::Metadata, ListTab::Samples, ListTab::Patterns] {
+            view.tab = tab;
+            egui::__run_test_ui(|ui| top_row(ui, &l, &mut view, &t));
+        }
     }
 }

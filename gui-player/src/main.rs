@@ -4,6 +4,7 @@
 mod app;
 mod arrangement;
 mod chrome;
+mod dialogs;
 mod fatal;
 mod fmt;
 mod grid;
@@ -13,6 +14,7 @@ mod panels;
 mod screenshot;
 mod transport;
 mod view;
+mod widgets;
 
 use std::path::PathBuf;
 
@@ -32,14 +34,14 @@ fn run() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("bit-music player")
+            .with_title("bit-music gui-player")
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([640.0, 420.0]),
         ..Default::default()
     };
 
     eframe::run_native(
-        "bit-music player",
+        "bit-music gui-player",
         options,
         Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial)))),
     )

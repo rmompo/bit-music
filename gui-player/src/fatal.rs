@@ -7,11 +7,11 @@
 
 use std::panic::PanicHookInfo;
 
-const TITLE: &str = "bit-music player";
+const TITLE: &str = "bit-music gui-player";
 
 /// The text of the dialog shown when the app can't start.
 pub fn startup_error_text(error: &str) -> String {
-    format!("bit-music player could not start.\n\n{error}")
+    format!("bit-music gui-player could not start.\n\n{error}")
 }
 
 /// Prints `message` to stderr and shows it in a native error dialog.
@@ -47,11 +47,11 @@ fn panic_text(info: &PanicHookInfo<'_>) -> String {
         .unwrap_or_else(|| "unknown error".to_string());
     match info.location() {
         Some(loc) => format!(
-            "bit-music player crashed.\n\n{message}\n\n({}:{})",
+            "bit-music gui-player crashed.\n\n{message}\n\n({}:{})",
             loc.file(),
             loc.line()
         ),
-        None => format!("bit-music player crashed.\n\n{message}"),
+        None => format!("bit-music gui-player crashed.\n\n{message}"),
     }
 }
 
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn startup_text_includes_the_underlying_error() {
         let text = startup_error_text("no suitable graphics adapter");
-        assert!(text.starts_with("bit-music player could not start."));
+        assert!(text.starts_with("bit-music gui-player could not start."));
         assert!(text.contains("no suitable graphics adapter"));
     }
 }

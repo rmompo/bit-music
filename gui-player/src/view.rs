@@ -1,5 +1,5 @@
 //! Per-composition view state: what is selected, which tab is open, which
-//! tracks are muted, the zoom, and caches derived from the composition.
+//! tracks are muted, the zoom, the master volume, and caches derived from the composition.
 
 use std::collections::HashMap;
 
@@ -22,6 +22,7 @@ pub enum Selection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ListTab {
     #[default]
+    Metadata,
     Samples,
     Patterns,
 }
@@ -39,6 +40,8 @@ pub struct ViewState {
     pub step_width: f32,
     /// Loop playback when it reaches the end.
     pub looping: bool,
+    /// Master volume, 0.0..=1.0.
+    pub volume: f32,
     /// One-shot request to scroll the arrangement horizontally to this
     /// offset (used to keep the playback cursor in view).
     pub scroll_to: Option<f32>,
@@ -57,6 +60,7 @@ impl ViewState {
             muted: vec![false; l.timeline.tracks.len()],
             step_width: DEFAULT_STEP_WIDTH,
             looping: false,
+            volume: 1.0,
             scroll_to: None,
             grids: c
                 .patterns

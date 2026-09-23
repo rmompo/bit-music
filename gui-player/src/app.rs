@@ -5,7 +5,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
 
-use crate::chrome::{self, StatusLine};
+use crate::dialogs::{self, Dialog};
+use crate::chrome::{self, StatusLine, StatusSliders};
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
 use crate::panels;
 use crate::screenshot::{self, ScreenshotJob};
@@ -36,18 +37,22 @@ struct Ready {
 pub struct PlayerApp {
     state: State,
     last_title: String,
+    /// The modal dialog currently open, if any.
+    dialog: Option<Dialog>,
     /// Developer aid, only set through `BM_GUI_SCREENSHOT`.
     screenshot: Option<ScreenshotJob>,
 }
 
-const APP_TITLE: &str = "bit-music player";
+const APP_TITLE: &str = dialogs::PRODUCT;
 
 impl PlayerApp {
     /// `initial` is a composition to open at startup (e.g. from the command line).
     pub fn new(ctx: &egui::Context, initial: Option<PathBuf>) -> Self {
+        chrome::install_icon_font(ctx);
         let mut app = Self {
             state: State::Empty,
             last_title: String::new(),
+            dialog: screenshot::initial_dialog(),
             screenshot: ScreenshotJob::from_env(),
         };
         if let Some(path) = initial {
@@ -172,7 +177,8 @@ impl eframe::App for PlayerApp {
         egui::Panel::bottom("status_bar").show(ui, |ui| match &mut self.state {
             State::Ready(r) => {
                 let Ready { loaded, view, .. } = &mut **r;
-                chrome::status_bar(ui, &StatusLine::Ready(loaded), Some(&mut view.step_width));
+                let sliders = StatusSliders { volume: &mut view.volume, zoom: &mut view.step_width };
+                chrome::status_bar(ui, &StatusLine::Ready(loaded), Some(sliders));
             }
             other => chrome::status_bar(ui, &status_of(other), None),
         });
@@ -194,10 +200,15 @@ impl eframe::App for PlayerApp {
                 egui::Panel::top("info_panel")
                     .resizable(true)
                     .default_size(330.0)
-                    .show(ui, |ui| panels::top_row(ui, loaded, view));
+                    .show(ui, |ui| panels::top_row(ui, loaded, view, transport));
                 arrangement::show(ui, loaded, view, transport.playhead(), transport.is_playing());
             }
         });
+
+        if actions.dialog.is_some() {
+            self.dialog = actions.dialog;
+        }
+        dialogs::show(&ctx, &mut self.dialog);
 
         if actions.open {
             if let Some(path) = pick_file() {
@@ -240,7 +251,7 @@ mod tests {
     fn starts_empty_and_titled_with_the_app_name() {
         let app = PlayerApp::new(&egui::Context::default(), None);
         assert!(matches!(app.state, State::Empty));
-        assert_eq!(app.window_title(), "bit-music player");
+        assert_eq!(app.window_title(), "bit-music gui-player");
     }
 
     #[test]
@@ -249,7 +260,7 @@ mod tests {
         assert!(matches!(app.state, State::Loading { .. }));
         wait_until_loaded(&mut app);
         assert!(matches!(app.state, State::Ready(_)));
-        assert_eq!(app.window_title(), "Demo - bit-music player");
+        assert_eq!(app.window_title(), "Demo - bit-music gui-player");
     }
 
     #[test]
@@ -270,6 +281,6 @@ mod tests {
         let mut app = PlayerApp::new(&egui::Context::default(), Some("/no/such/file.bm1".into()));
         wait_until_loaded(&mut app);
         assert!(matches!(app.state, State::Failed { .. }));
-        assert_eq!(app.window_title(), "bit-music player");
+        assert_eq!(app.window_title(), "bit-music gui-player");
     }
 }

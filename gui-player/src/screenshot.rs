@@ -84,6 +84,17 @@ pub fn initial_play_at() -> Option<f64> {
     std::env::var("BM_GUI_PLAY_AT").ok()?.parse().ok()
 }
 
+/// Dialog requested through `BM_GUI_DIALOG` (`libraries`, `settings`, `about`).
+pub fn initial_dialog() -> Option<crate::dialogs::Dialog> {
+    use crate::dialogs::Dialog;
+    match std::env::var("BM_GUI_DIALOG").ok()?.as_str() {
+        "libraries" => Some(Dialog::Libraries),
+        "settings" => Some(Dialog::Settings),
+        "about" => Some(Dialog::About),
+        _ => None,
+    }
+}
+
 fn parse_selection(text: &str) -> Option<(Selection, ListTab)> {
     let (kind, id) = text.split_once(':')?;
     match kind {

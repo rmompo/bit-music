@@ -6,11 +6,13 @@
 //! together. The left column and the ruler are "pinned" by painting them at
 //! the viewport's current offset, so they stay put while the rest scrolls.
 
+use egui_phosphor::regular;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
+use crate::widgets::{IconButton, ICON_BUTTON_SIZE};
 use crate::view::{ListTab, Selection, ViewState};
 
 const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
@@ -193,12 +195,13 @@ pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Optio
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
                 let button = Rect::from_min_size(
-                    Pos2::new(cell.min.x + 8.0, y + (ROW_HEIGHT - 26.0) / 2.0),
-                    Vec2::new(30.0, 26.0),
+                    Pos2::new(cell.min.x + 8.0, y + (ROW_HEIGHT - ICON_BUTTON_SIZE) / 2.0),
+                    Vec2::splat(ICON_BUTTON_SIZE),
                 );
                 let muted = view.muted[ti];
+                let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
                 let response = ui
-                    .put(button, egui::Button::new("M").selected(muted))
+                    .put(button, IconButton::new(icon).selected(muted))
                     .on_hover_text(if muted { "Unmute track" } else { "Mute track" });
                 if response.clicked() {
                     view.muted[ti] = !muted;
@@ -267,7 +270,7 @@ pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Optio
             painter.text(
                 corner.left_center() + Vec2::new(8.0, 0.0),
                 Align2::LEFT_CENTER,
-                "Tracks  (M = mute)",
+                "Tracks",
                 FontId::proportional(11.0),
                 text_color.gamma_multiply(0.7),
             );

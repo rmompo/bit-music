@@ -1,16 +1,20 @@
 [package]
 name = "gui-player"
 description = "bit-music graphical player"
+build = "build.rs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bm-dsp.workspace = true
 bm-format.workspace = true
 bm-playback.workspace = true
+bm-render.workspace = true
 bm-project.workspace = true
 bm-session.workspace = true
 bm-timeline.workspace = true
 eframe.workspace = true
+egui-phosphor.workspace = true
 rfd.workspace = true

@@ -6,15 +6,29 @@
 //! the reason) and the controls are disabled instead of the app failing.
 
 use bm_playback::Engine;
-use eframe::egui::{self, Button, RichText};
+use bm_render::render_pattern;
+use bm_dsp::AudioBuffer;
+use eframe::egui::{self, RichText};
+use egui_phosphor::regular;
 
 use crate::fmt;
+use crate::widgets::IconButton;
 use crate::loader::Loaded;
 use crate::panels::ERR_COLOR;
 use crate::view::ViewState;
 
+fn sample_key(id: &str) -> String {
+    format!("sample:{id}")
+}
+
+fn pattern_key(id: &str) -> String {
+    format!("pattern:{id}")
+}
+
 pub struct Transport {
     engine: Option<Engine>,
+    /// Keys (`sample:<id>` / `pattern:<id>`), in the order of the engine's previews.
+    preview_ids: Vec<String>,
     error: Option<String>,
 }
 
@@ -28,9 +42,29 @@ impl Transport {
                     .unwrap_or_else(|| "no audio to play".to_string()),
             );
         };
-        match Engine::new(session.tracks.iter().map(|t| &t.audio)) {
+        // Previews: every sample as it is, and every pattern rendered on
+        // its own (with the composition's tempo).
+        let c = &l.project.composition;
+        let mut preview_ids: Vec<String> = Vec::new();
+        let mut previews: Vec<AudioBuffer> = Vec::new();
+        for s in &c.samples {
+            if let Some(audio) = session.samples.get(&s.id) {
+                preview_ids.push(sample_key(&s.id));
+                previews.push(audio.clone());
+            }
+        }
+        for p in &c.patterns {
+            if let Some(audio) =
+                render_pattern(p, &c.samples, &session.samples, l.seconds_per_step)
+            {
+                preview_ids.push(pattern_key(&p.id));
+                previews.push(audio);
+            }
+        }
+        match Engine::with_previews(session.tracks.iter().map(|t| &t.audio), &previews) {
             Ok(engine) => Self {
                 engine: Some(engine),
+                preview_ids,
                 error: None,
             },
             Err(err) => Self::unavailable(err.to_string()),
@@ -40,6 +74,7 @@ impl Transport {
     fn unavailable(reason: String) -> Self {
         Self {
             engine: None,
+            preview_ids: Vec::new(),
             error: Some(reason),
         }
     }
@@ -103,35 +138,82 @@ impl Transport {
         }
     }
 
-    /// Pushes the view's mute flags and loop setting to the engine.
+    /// Whether sample `id` can be played on its own.
+    pub fn can_preview_sample(&self, id: &str) -> bool {
+        self.can_preview(&sample_key(id))
+    }
+
+    /// Whether pattern `id` can be played on its own.
+    pub fn can_preview_pattern(&self, id: &str) -> bool {
+        self.can_preview(&pattern_key(id))
+    }
+
+    /// Plays sample `id` once, at its original pitch, on top of the
+    /// transport (which is not touched).
+    pub fn preview_sample(&self, id: &str) {
+        self.preview(&sample_key(id));
+    }
+
+    /// Plays pattern `id` once from its start, on top of the transport.
+    pub fn preview_pattern(&self, id: &str) {
+        self.preview(&pattern_key(id));
+    }
+
+    fn can_preview(&self, key: &str) -> bool {
+        self.engine.is_some() && self.preview_ids.iter().any(|p| p == key)
+    }
+
+    fn preview(&self, key: &str) {
+        if let (Some(e), Some(i)) = (&self.engine, self.preview_ids.iter().position(|p| p == key)) {
+            e.play_preview(i);
+        }
+    }
+
+    /// Pushes the view's mute flags, loop setting and volume to the engine.
     pub fn sync(&self, view: &ViewState) {
         if let Some(e) = &self.engine {
             for (i, muted) in view.muted.iter().enumerate() {
                 e.set_muted(i, *muted);
             }
             e.set_looping(view.looping);
+            e.set_volume(view.volume);
         }
     }
 }
 
-/// The transport ribbon: Play / Pause / Stop / Loop, `elapsed / total`, and
+/// The transport ribbon: play/pause toggle, stop, loop, `elapsed / total`, and
 /// a position slider over the whole song.
 pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
     ui.horizontal(|ui| {
         let playing = transport.is_playing();
         let available = transport.available();
 
-        if ui.add_enabled(available && !playing, Button::new("Play")).clicked() {
-            transport.play();
+        // One toggle: shows what a click will do. It goes back to "play"
+        // by itself when playback stops or reaches the end.
+        let (icon, tip) = if playing {
+            (regular::PAUSE, "Pause (Space)")
+        } else {
+            (regular::PLAY, "Play (Space)")
+        };
+        let toggle = ui
+            .add_enabled(available, IconButton::new(icon))
+            .on_hover_text(tip);
+        if toggle.clicked() {
+            transport.toggle_play();
         }
-        if ui.add_enabled(available && playing, Button::new("Pause")).clicked() {
-            transport.pause();
-        }
-        if ui.add_enabled(available, Button::new("Stop")).clicked() {
+        let stop = ui
+            .add_enabled(available, IconButton::new(regular::STOP))
+            .on_hover_text("Stop and rewind");
+        if stop.clicked() {
             transport.stop();
         }
         ui.add_enabled_ui(available, |ui| {
-            ui.toggle_value(&mut view.looping, "Loop");
+            let looping = ui
+                .add(IconButton::new(regular::REPEAT).selected(view.looping))
+                .on_hover_text("Loop");
+            if looping.clicked() {
+                view.looping = !view.looping;
+            }
         });
 
         ui.add_space(8.0);
