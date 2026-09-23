@@ -35,17 +35,16 @@ and patterns; the arrangement view and the transport are next. See
 Editor for creating and modifying compositions without hand-writing the
 JSON: the gui-player with editing on top. *(Not implemented yet.)*
 
-## Continuous integration
+## Windows builds
 
-A GitHub Actions workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
-runs the whole test suite on every push and pull request. When the tests pass it
-cross-compiles the Windows executables and publishes them as a build artifact
-(`scripts/package-windows.sh` builds the zip); pushing a `v*` tag also attaches
-that zip to a GitHub release.
+There is no CI workflow at the moment. To build the Windows executables, use
+`scripts/build-windows.sh` (and `scripts/package-windows.sh` for a zip).
 
-**The Windows binaries are not code-signed yet.** Windows Smart App Control (on by
-default on new Windows 11 installs) and SmartScreen can block unsigned programs.
-Code signing through the SignPath Foundation is planned.
+**The Windows binaries are not code-signed.** Windows 11 Smart App Control and
+SmartScreen can block unsigned programs; on a development machine, turning on
+Windows Developer Mode is enough to run them. How to bring back the CI and how
+to get signed binaries (SignPath Foundation) is documented in
+[`specs/ci-and-signing.md`](specs/ci-and-signing.md).
 
 ## License
 
