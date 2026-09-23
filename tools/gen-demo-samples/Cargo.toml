@@ -1,0 +1,10 @@
+[package]
+name = "gen-demo-samples"
+description = "Generates the synthetic demo samples (kick, snare, hi-hat, e-piano, sax) from code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-wav.workspace = true
