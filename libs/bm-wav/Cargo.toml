@@ -1,0 +1,12 @@
+[package]
+name = "bm-wav"
+description = "bit-music .wav reading, writing and checking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-dsp.workspace = true
+hound.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "bm-timeline"
+description = "bit-music arrangement resolution: grid/column model, looping, step timing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-format.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "bm-project"
+description = "bit-music project loading: read a .bm1, resolve sample paths, check samples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-format.workspace = true
+bm-wav.workspace = true
+thiserror.workspace = true

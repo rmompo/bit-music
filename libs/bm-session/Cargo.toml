@@ -1,0 +1,15 @@
+[package]
+name = "bm-session"
+description = "bit-music facade: open a project and get it ready to play or export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-dsp.workspace = true
+bm-project.workspace = true
+bm-render.workspace = true
+bm-timeline.workspace = true
+bm-wav.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["libs/*", "tools/*", "player", "gui-player"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rmompo/bit-music"
+
+[workspace.dependencies]
+# Internal libraries (see specs/libraries.md)
+bm-dsp = { path = "libs/bm-dsp" }
+bm-format = { path = "libs/bm-format" }
+bm-wav = { path = "libs/bm-wav" }
+bm-timeline = { path = "libs/bm-timeline" }
+bm-project = { path = "libs/bm-project" }
+bm-render = { path = "libs/bm-render" }
+bm-playback = { path = "libs/bm-playback" }
+bm-session = { path = "libs/bm-session" }
+
+# Third-party
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+cpal = "0.15"
+hound = "3"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+eframe = "0.36"
+rfd = "0.17"
+
+[profile.release]
+opt-level = 3
+lto = true

@@ -1,0 +1,12 @@
+[package]
+name = "bm-render"
+description = "bit-music offline rendering: timeline + samples -> per-track buffers and mix"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-dsp.workspace = true
+bm-format.workspace = true
+bm-timeline.workspace = true
