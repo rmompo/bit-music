@@ -3,14 +3,15 @@
 //!
 //! [`Engine`] is non-blocking: create it from already-rendered per-track
 //! buffers, then control it from any thread (play, pause, stop, seek, loop,
-//! mute per track) and read its position. The audio callback is real-time
+//! mute per track, master volume, one-shot sample previews) and read its
+//! position. The audio callback is real-time
 //! safe: it takes no locks and does no allocation — all shared state is
 //! atomics — so the UI thread can never make it glitch.
 //!
 //! This is the only bit-music crate that depends on `cpal`; everything else
 //! builds without system audio libraries.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bm_dsp::{self as dsp, AudioBuffer};
@@ -35,12 +36,21 @@ pub enum PlaybackError {
 /// Sentinel meaning "no seek requested".
 const NO_SEEK: usize = usize::MAX;
 
+/// Sentinel meaning "this preview is not playing".
+const IDLE: usize = usize::MAX;
+
 /// State shared between the controlling thread and the audio callback.
 /// Everything mutable is atomic; the audio data is immutable.
 struct Core {
     /// One mono buffer per track, already at the device sample rate.
     tracks: Vec<Vec<f32>>,
     muted: Vec<AtomicBool>,
+    /// Short one-shot sounds (sample previews), already at the device rate.
+    previews: Vec<Vec<f32>>,
+    /// Next frame of each preview, or `IDLE`.
+    preview_pos: Vec<AtomicUsize>,
+    /// Master volume as `f32` bits (1.0 = unchanged).
+    volume: AtomicU32,
     /// Length in frames of the longest track.
     len: usize,
     /// Fixed gain that keeps the full (unmuted) mix from clipping.
@@ -57,7 +67,7 @@ struct Core {
 }
 
 impl Core {
-    fn new(tracks: Vec<Vec<f32>>) -> Self {
+    fn new(tracks: Vec<Vec<f32>>, previews: Vec<Vec<f32>>) -> Self {
         let len = tracks.iter().map(Vec::len).max().unwrap_or(0);
 
         // Same normalization the offline mix uses: one fixed gain from the
@@ -69,9 +79,13 @@ impl Core {
         let gain = dsp::normalization_gain(dsp::peak(&full_mix));
 
         let muted = tracks.iter().map(|_| AtomicBool::new(false)).collect();
+        let preview_pos = previews.iter().map(|_| AtomicUsize::new(IDLE)).collect();
         Self {
             tracks,
             muted,
+            previews,
+            preview_pos,
+            volume: AtomicU32::new(1.0f32.to_bits()),
             len,
             gain,
             position: AtomicUsize::new(0),
@@ -94,6 +108,7 @@ impl Core {
         };
         let mut playing = self.playing.load(Ordering::Relaxed);
         let looping = self.looping.load(Ordering::Relaxed);
+        let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
 
         for frame in out.chunks_mut(channels.max(1)) {
             let mut value = 0.0f32;
@@ -118,6 +133,16 @@ impl Core {
                 }
             }
 
+            // Sample previews sound on top of the transport, even when paused.
+            for (buf, pos) in self.previews.iter().zip(&self.preview_pos) {
+                let p = pos.load(Ordering::Relaxed);
+                if p != IDLE {
+                    value += buf.get(p).copied().unwrap_or(0.0);
+                    pos.store(if p + 1 < buf.len() { p + 1 } else { IDLE }, Ordering::Relaxed);
+                }
+            }
+
+            let value = (value * volume).clamp(-1.0, 1.0);
             for sample in frame.iter_mut() {
                 *sample = T::from_sample(value);
             }
@@ -153,6 +178,15 @@ impl Engine {
     pub fn new<'a>(
         tracks: impl IntoIterator<Item = &'a AudioBuffer>,
     ) -> Result<Self, PlaybackError> {
+        Self::with_previews(tracks, std::iter::empty())
+    }
+
+    /// Like [`new`](Self::new), plus a set of one-shot sounds that can be
+    /// triggered by index with [`play_preview`](Self::play_preview).
+    pub fn with_previews<'a>(
+        tracks: impl IntoIterator<Item = &'a AudioBuffer>,
+        previews: impl IntoIterator<Item = &'a AudioBuffer>,
+    ) -> Result<Self, PlaybackError> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -164,20 +198,19 @@ impl Engine {
         let device_sample_rate = supported.sample_rate().0;
         let stream_config: StreamConfig = supported.config();
 
-        // Bring every track to the device sample rate up front (no pitch
+        // Bring every buffer to the device sample rate up front (no pitch
         // change: same resampling math, ratio = source rate / device rate).
-        let device_tracks: Vec<Vec<f32>> = tracks
-            .into_iter()
-            .map(|t| {
-                if t.sample_rate == device_sample_rate {
-                    t.data.clone()
-                } else {
-                    dsp::resample(&t.data, t.sample_rate as f64 / device_sample_rate as f64)
-                }
-            })
-            .collect();
+        let to_device = |t: &AudioBuffer| -> Vec<f32> {
+            if t.sample_rate == device_sample_rate {
+                t.data.clone()
+            } else {
+                dsp::resample(&t.data, t.sample_rate as f64 / device_sample_rate as f64)
+            }
+        };
+        let device_tracks: Vec<Vec<f32>> = tracks.into_iter().map(to_device).collect();
+        let device_previews: Vec<Vec<f32>> = previews.into_iter().map(to_device).collect();
 
-        let core = Arc::new(Core::new(device_tracks));
+        let core = Arc::new(Core::new(device_tracks, device_previews));
 
         let stream = match sample_format {
             SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, channels, &core)?,
@@ -222,6 +255,31 @@ impl Engine {
             .seek_request
             .store(frame.min(self.core.len), Ordering::Relaxed);
         self.core.finished.store(false, Ordering::Relaxed);
+    }
+
+    /// Sets the master volume (clamped to 0.0..=1.0), applied to the
+    /// transport and to previews.
+    pub fn set_volume(&self, volume: f32) {
+        self.core
+            .volume
+            .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.core.volume.load(Ordering::Relaxed))
+    }
+
+    /// Plays preview `index` from its start, on top of whatever else is
+    /// sounding and without touching the transport. Restarts it if it is
+    /// already sounding; ignored if out of range.
+    pub fn play_preview(&self, index: usize) {
+        if let Some(pos) = self.core.preview_pos.get(index) {
+            pos.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub fn preview_count(&self) -> usize {
+        self.core.previews.len()
     }
 
     pub fn set_looping(&self, looping: bool) {
@@ -300,7 +358,7 @@ mod tests {
     use super::*;
 
     fn core(tracks: Vec<Vec<f32>>) -> Core {
-        Core::new(tracks)
+        Core::new(tracks, Vec::new())
     }
 
     /// Runs one callback block over `frames` frames of `channels` channels.
@@ -370,5 +428,33 @@ mod tests {
         // position already reflects the pending seek
         assert_eq!(c.current_position(), 2);
         assert_eq!(block(&c, 2, 1), vec![0.3, 0.4]);
+    }
+
+    #[test]
+    fn volume_scales_the_output() {
+        let c = core(vec![vec![0.5; 4]]);
+        c.playing.store(true, Ordering::Relaxed);
+        c.volume.store(0.5f32.to_bits(), Ordering::Relaxed);
+        assert_eq!(block(&c, 1, 1), vec![0.25]);
+    }
+
+    #[test]
+    fn a_preview_sounds_once_while_the_transport_is_paused() {
+        let c = Core::new(vec![vec![0.0; 8]], vec![vec![0.1, 0.2]]);
+        // Idle until triggered.
+        assert_eq!(block(&c, 2, 1), vec![0.0, 0.0]);
+        c.preview_pos[0].store(0, Ordering::Relaxed);
+        assert_eq!(block(&c, 4, 1), vec![0.1, 0.2, 0.0, 0.0]);
+        assert_eq!(c.preview_pos[0].load(Ordering::Relaxed), IDLE);
+        // The transport did not move.
+        assert_eq!(c.current_position(), 0);
+    }
+
+    #[test]
+    fn a_preview_is_mixed_with_the_transport_and_never_clips() {
+        let c = Core::new(vec![vec![0.5; 2]], vec![vec![0.75; 2]]);
+        c.playing.store(true, Ordering::Relaxed);
+        c.preview_pos[0].store(0, Ordering::Relaxed);
+        assert_eq!(block(&c, 1, 1), vec![1.0]);
     }
 }
