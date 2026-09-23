@@ -1,11 +1,11 @@
-//! Generates the demo samples used by `player/demos` from plain code, so the
+//! Generates the demo samples used by `demos` from plain code, so the
 //! project's audio material is entirely its own (no third-party recordings)
 //! and anyone can regenerate or inspect it.
 //!
 //! Usage (from the repository root):
 //!
 //! ```text
-//! cargo run -p gen-demo-samples                 # writes player/demos/samples
+//! cargo run -p gen-demo-samples                 # writes demos/samples
 //! cargo run -p gen-demo-samples -- some/dir     # writes elsewhere
 //! ```
 //!
@@ -192,7 +192,7 @@ fn main() -> ExitCode {
     let out_dir = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("player/demos/samples"));
+        .unwrap_or_else(|| PathBuf::from("demos/samples"));
 
     if let Err(err) = std::fs::create_dir_all(&out_dir) {
         eprintln!("could not create '{}': {err}", out_dir.display());

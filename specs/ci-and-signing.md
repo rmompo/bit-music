@@ -208,8 +208,8 @@ mkdir -p "${STAGE}/demos/songs"
 
 cp "${BIN}/bm.exe" "${BIN}/gui-player.exe" "${STAGE}/"
 cp player/bm.hlp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md README.md "${STAGE}/"
-cp player/demos/songs/*.bm1 "${STAGE}/demos/songs/"
-cp -r player/demos/samples "${STAGE}/demos/samples"
+cp demos/songs/*.bm1 "${STAGE}/demos/songs/"
+cp -r demos/samples "${STAGE}/demos/samples"
 rm -f "${STAGE}/demos/samples/README.md"
 
 (cd dist && zip -qr "${NAME}.zip" "${NAME}")
@@ -226,7 +226,7 @@ the current wording before applying):
 - An OSI-approved open source license, without commercial dual-licensing for any
   component. *(This project: `MIT OR Apache-2.0`.)*
 - No proprietary or non-open-source components. *(The demo samples are
-  synthesized from code for this reason; see `player/demos/samples/README.md`.)*
+  synthesized from code for this reason; see `demos/samples/README.md`.)*
 - No malware or potentially unwanted programs, and no hacking tools.
 - Actively maintained, and **already released in the form that will be signed**.
 - Functionality described on the download page or app store entry.

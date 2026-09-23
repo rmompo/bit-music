@@ -288,7 +288,7 @@ mod tests {
     use std::path::Path;
 
     fn demo() -> Box<Loaded> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../player/demos/songs/song1.bm1");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1");
         match load_blocking(&path) {
             LoadOutcome::Loaded(l) => l,
             LoadOutcome::Failed { message, .. } => panic!("demo failed to load: {message}"),

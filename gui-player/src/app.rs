@@ -234,7 +234,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn demo() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../player/demos/songs/song1.bm1")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1")
     }
 
     /// Polls until the background load finishes (or fails the test).

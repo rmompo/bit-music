@@ -30,8 +30,8 @@ mkdir -p "${STAGE}/demos/songs"
 
 cp "${BIN}/bm.exe" "${BIN}/gui-player.exe" "${STAGE}/"
 cp player/bm.hlp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md README.md "${STAGE}/"
-cp player/demos/songs/*.bm1 "${STAGE}/demos/songs/"
-cp -r player/demos/samples "${STAGE}/demos/samples"
+cp demos/songs/*.bm1 "${STAGE}/demos/songs/"
+cp -r demos/samples "${STAGE}/demos/samples"
 rm -f "${STAGE}/demos/samples/README.md"
 
 (cd dist && zip -qr "${NAME}.zip" "${NAME}")

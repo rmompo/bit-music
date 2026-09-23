@@ -11,7 +11,7 @@ documents its own implementation decisions in its own `specs/` folder.
 
 The demo audio is synthesized from code, not recorded or downloaded: see
 [`tools/gen-demo-samples`](tools/gen-demo-samples/) and
-[`player/demos/samples/`](player/demos/samples/).
+[`demos/samples/`](demos/samples/).
 
 Build with the scripts in [`scripts/`](scripts/) (for example
 `scripts/build-windows.sh`), or `cargo test --workspace` to run every test.

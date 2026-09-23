@@ -201,7 +201,7 @@ so that every player and the editor agree:
 
 ## Full example
 
-See [`player/demos/songs/song1.bm1`](../player/demos/songs/song1.bm1).
+See [`demos/songs/song1.bm1`](../demos/songs/song1.bm1).
 
 ## Open items
 

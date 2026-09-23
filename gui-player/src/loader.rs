@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     fn demo() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../player/demos/songs/song1.bm1")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1")
     }
 
     #[test]

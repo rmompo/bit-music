@@ -82,7 +82,7 @@ The Windows executable is not code-signed, so Windows 11 Smart App Control
 can block it. On a development machine, Windows Developer Mode lets it run;
 see `../../specs/ci-and-signing.md`, which also documents the CI workflow that
 used to build it and how to get signed binaries. The demo composition and its
-synthesized samples live in `player/demos/`.
+synthesized samples live in `demos/`.
 
 ## Modules
 

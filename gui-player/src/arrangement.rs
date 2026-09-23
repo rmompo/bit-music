@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn draws_the_demo_arrangement_without_panicking_at_several_zooms() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../player/demos/songs/song1.bm1");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1");
         let LoadOutcome::Loaded(l) = load_blocking(&path) else {
             panic!("demo should load");
         };
