@@ -31,6 +31,21 @@ placeholder `bm magik`.
   expected behavior for this kind of format.
 - **CLI**: `clap` (derive), subcommand-based (`play`, `check-integrity`,
   `check-samples`, `check`, `export`, `version`, `help`, `magik`).
+- **No short flags, and no `--help`/`--version` flags.** Options are long-only
+  (`--non-stop`, `--wav`), and `version` and `help` exist only as
+  subcommands (`bm version`, `bm help`), so there is a single way to ask for
+  each. `-h`, `-V`, `-v` and `--help`/`--version` are rejected at the top level
+  and by every subcommand except `magik`, which deliberately accepts arbitrary
+  trailing arguments because its switches are not defined yet.
+- **`check-integrity` vs `check-samples`**: the first validates the structure
+  and the id references (through `bm_project::load`, which parses and
+  validates with `bm-format`) without touching the audio files; the second
+  additionally checks that each sample file exists and is a well-formed
+  `.wav`, reading only its header (`bm_project::check_samples`); `check` runs
+  both.
+- **Format version guard**: `bm version` prints the tool version and the
+  supported `.bm1` format versions, and loading rejects a composition whose
+  `metadata.version` is not supported.
 - **`bm export`**: reuses the same pipeline as `play` (`bm_session::open`),
   writing the mixed buffer to a `.wav` with the same base name as the input
   via `bm_wav::write_wav`
@@ -61,6 +76,14 @@ placeholder `bm magik`.
   for `--non-stop`), `serde`/`serde_json` (help file). Everything else comes
   from the shared `bm-*` libraries.
 
+## Running the Windows build
+
+The Windows executable is not code-signed, so Windows 11 Smart App Control
+can block it. On a development machine, Windows Developer Mode lets it run;
+see `../../specs/ci-and-signing.md`, which also documents the CI workflow that
+used to build it and how to get signed binaries. The demo composition and its
+synthesized samples live in `player/demos/`.
+
 ## Modules
 
 The player is a thin application over the shared libraries described in
@@ -83,5 +106,7 @@ command line:
   with long, sustained samples.
 - **Mono only**: everything is downmixed to mono; there is no stereo
   panning.
-- **Simple normalization**: heavy overlap lowers the overall volume rather
-  than being mixed with something more elaborate (compression, etc).
+- **Simple normalization**: one fixed gain, computed from the peak of the
+  full mix, keeps it from clipping. Heavy overlap therefore lowers the overall
+  volume (and muting a track makes the rest quieter) instead of being handled
+  with something more elaborate such as compression.

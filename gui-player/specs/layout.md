@@ -1,9 +1,9 @@
 # gui-player — layout and MVP scope
 
 Desktop application (Windows, Ubuntu and similar) that opens a `.bm1`
-composition, shows its contents and plays it. The current `player` prototype
-evolves into `gui-player`, which later evolves into `gui-editor` (the same
-application with editing on top).
+composition, shows its contents and plays it. It is built on the same
+shared libraries as the `bm` command-line player, and it is meant to evolve
+into `gui-editor` (the same application with editing on top).
 
 Status: **layout agreed; framework agreed (egui/eframe)**. The shared
 libraries it builds on are implemented (see `../../specs/libraries.md`).
@@ -64,34 +64,42 @@ The arrangement has no title of its own, and its zoom slider lives at the right 
 ## Areas
 
 - **Menu bar**: `File` with *Open…* and *Quit* (*Export WAV…* is planned).
-- **1 Metadata**: title, bpm, stepsPerBeat, format version, and the `others` key/value pairs. Vertical scroll.
-- **2 Samples**: list of samples (id, file, root note/octave). Vertical scroll.
-- **3 Patterns**: list of patterns (id, sample, length in steps). Vertical scroll.
-- **4 Arrangement**: one row per track inside a single shared 2D scroll area (vertical and horizontal), so all tracks scroll together.
-  - **Track row** = `[M]` + `[render]`. `[M]` is the mute toggle and stays fixed while the render scrolls horizontally. The render shows the track's patterns.
-  - The column **ruler** stays fixed at the top of the arrangement.
+- **A, Metadata**: title, format version, bpm, steps per beat, seconds per step, length, and the `others` key/value pairs. Vertical scroll.
+- **B, lists**: a tab container with two tabs, *Samples* and *Patterns*. Each is a list of names, with a chip in the sample's color (a sample whose file is missing is shown in red). Clicking an element selects it and shows its detail in C. Vertical scroll.
+- **C, properties**: the detail of what is selected in B, or of the pattern whose block was clicked in D. Vertical scroll.
+  - A **sample** shows its status, root note, length, frames, sample rate, file path and the patterns that use it.
+  - A **pattern** shows its facts (steps, beats, sounding steps, distinct pitches), the **step grid**, and the tracks that use it (noting repetitions that come from looping).
+- **D, arrangement**: one row per track inside a single shared 2D scroll area (vertical and horizontal), so all tracks scroll together, with no title of its own.
+  - **Track row** = `[M]` + render. `[M]` is the mute toggle and stays pinned while the render scrolls horizontally. The render shows the track's patterns as blocks.
+  - The column **ruler** stays pinned at the top.
 - **Transport**, directly below the arrangement: play, pause, stop, loop, elapsed/total time and a position (seek) bar over the whole song.
-- **Status bar**: file name, integrity result, sample availability summary.
+- **Status bar**: file name, integrity result, sample availability summary, and the arrangement zoom slider on the right.
 
 ## MVP scope
 
-- Open a `.bm1` and show metadata, samples, patterns and the arrangement's tracks.
-- Play, pause, stop, loop and seek, with a playback cursor moving across the arrangement.
-- Mute per track.
-- Export to WAV (same result as `bm export --wav`).
-- Report integrity errors and missing/invalid samples with the same criteria as `bm check`.
+- [x] Open a `.bm1` and show metadata, samples, patterns and the arrangement's tracks.
+- [x] Play, pause, stop, loop and seek, with a playback cursor moving across the arrangement.
+- [x] Mute per track.
+- [ ] Export to WAV (the same result as `bm export --wav`).
+- [x] Report a composition that fails validation with its error message, and flag missing or invalid samples in the lists, the properties and the status bar (the same checks as `bm check`).
 
 Out of scope: editing compositions (that is `gui-editor`).
 
-## Proposed refinements (not yet confirmed)
+## Refinements beyond the MVP
 
-- Pattern blocks with width proportional to their steps, colored by sample (the samples list acts as the legend); loop repetitions dimmed; `null` gaps shown as empty space.
+Implemented:
+
+- Pattern blocks with width proportional to their steps, colored by sample (the color chips in B act as the legend), notes drawn inside, loop repetitions dimmed, and `null` gaps left empty.
 - Horizontal zoom.
-- Cross-highlighting: selecting a pattern highlights where it is used in the arrangement, and vice versa; selecting a sample highlights its patterns.
-- Missing/invalid sample warning marker in the samples list.
-- Empty state when no file is open ("open or drop a .bm1").
-- Collapsible top panel to give the arrangement full height.
-- Solo per track (cheap once per-track buffers exist).
+- Selection links: clicking a block in D selects its pattern in B and C, and the selected pattern's blocks are outlined.
+- A "missing" marker for samples whose file is not usable.
+- An empty state when no file is open ("open or drop a .bm1").
+
+Not implemented yet:
+
+- Solo per track (cheap now that each track has its own buffer).
+- Highlighting in D the patterns of a sample selected in B.
+- A collapsible top panel to give the arrangement the full height (it is resizable today).
 
 ## After the MVP
 
@@ -101,7 +109,8 @@ Out of scope: editing compositions (that is `gui-editor`).
 ## Framework and platform notes
 
 - GUI framework: **egui/eframe**. A spike (a minimal eframe window with `cpal` linked) built and ran on Windows (mingw cross-compilation from WSL) and on Linux (Wayland and X11), with about 0.6-1.4 ms of UI CPU per frame for 16,000 unculled rectangles. Electron was analyzed and not chosen for the player; the library split keeps the door open to a different front end later.
-- Windows build should use the `windows` subsystem so no console window appears behind the GUI.
+- The Windows release build uses the `windows` subsystem, so no console window appears behind the GUI (which is why startup errors go to a dialog).
+- **Running the unsigned Windows build:** Windows 11 Smart App Control can block it; Windows Developer Mode lets it run. See `../../specs/ci-and-signing.md`.
 - `File > Open…` uses the native dialog through `rfd` (Win32 dialog on Windows; on Linux it goes through the desktop portal, so an `xdg-desktop-portal` service must be running).
 - **Build gotcha (Windows target):** `wgpu-hal` and `gpu-allocator` must use the same `windows` crate version. `cpal 0.15` pins `windows 0.54`, and cargo may reuse it for `gpu-allocator` (which accepts `>=0.53, <=0.62`), breaking `wgpu-hal`'s DX12 code with "multiple versions of crate `windows`". `Cargo.lock` therefore points `gpu-allocator` to `windows 0.62.2`; if a `cargo update` reverts it, re-point that one entry (or upgrade `cpal`).
 - Linux runtime needs the usual desktop libraries (Wayland/X11, Vulkan or GL); no development packages are needed to build.

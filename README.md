@@ -19,21 +19,26 @@ Build with the scripts in [`scripts/`](scripts/) (for example
 ## Components
 
 ### [`player/`](player/)
-Command-line player, built as the `bm` executable. Takes a composition file
-as an argument and plays it (`bm play song.bm1`); also supports validation
-subcommands (`check-integrity`, `check-samples`, `check`). Written in Rust,
-compiles to a native executable (Windows and Linux). See
-[`player/specs/`](player/specs/) for implementation details.
+Command-line player, built as the `bm` executable. `bm play song.bm1` plays a
+composition (`--non-stop` loops it), `bm export song.bm1 --wav` renders it to a
+`.wav`, and `bm check-integrity`, `check-samples` and `check` validate it.
+`bm version` and `bm help` describe the tool. Written in Rust, compiles to a
+native executable (Windows and Linux). See [`player/specs/`](player/specs/) for
+implementation details.
 
 ### [`gui-player/`](gui-player/)
-Player with a graphical interface (egui/eframe, Windows and Linux). Under
-construction: it already opens a composition and shows its metadata, samples
-and patterns; the arrangement view and the transport are next. See
-[`gui-player/specs/`](gui-player/specs/).
+Player with a graphical interface (egui/eframe, Windows and Linux). It opens a
+composition and shows its metadata, its samples and patterns (with a step grid
+for each pattern) and the arrangement with per-track mute, and plays it with a
+transport ribbon and a cursor. Exporting to WAV from the interface is still to
+come. See [`gui-player/specs/`](gui-player/specs/).
 
 ### [`gui-editor/`](gui-editor/)
 Editor for creating and modifying compositions without hand-writing the
 JSON: the gui-player with editing on top. *(Not implemented yet.)*
+
+### [`tools/`](tools/)
+Development tools. `gen-demo-samples` generates the demo audio from code.
 
 ## Windows builds
 

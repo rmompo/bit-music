@@ -49,9 +49,18 @@ Layer 2  bm-timeline (-> bm-format)
          bm-project  (-> bm-format, bm-wav)
          bm-playback (-> bm-dsp, cpal)
 Layer 3  bm-render   (-> bm-format, bm-timeline, bm-dsp)
-Layer 4  bm-session  (-> bm-project, bm-wav, bm-timeline, bm-render)
+Layer 4  bm-session  (-> bm-project, bm-wav, bm-timeline, bm-render, bm-dsp)
 Apps     bm, gui-player, gui-editor
+Tools    gen-demo-samples (-> bm-wav)
 ```
+
+## Who uses what
+
+| Consumer | Libraries |
+|---|---|
+| `bm` (CLI) | `bm-format`, `bm-project`, `bm-session`, `bm-render`, `bm-wav`, `bm-playback` |
+| `gui-player` | `bm-format`, `bm-project`, `bm-session`, `bm-timeline`, `bm-playback` |
+| `tools/gen-demo-samples` | `bm-wav` |
 
 ## Rules
 
@@ -77,3 +86,10 @@ Beyond moving code, the split added what a GUI and an editor need:
 - `bm-format` can serialize (`to_json`) as well as parse.
 
 Not yet done: solo per track, envelope/note duration, stereo.
+
+## Licensing
+
+Every crate inherits `license = "MIT OR Apache-2.0"` (and the repository URL)
+from the workspace manifest. `THIRD_PARTY_LICENSES.md` lists the notices of the
+third-party crates in the Windows and Linux binaries, and is regenerated with
+`scripts/gen-third-party-licenses.py`.

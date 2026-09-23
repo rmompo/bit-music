@@ -24,14 +24,21 @@ The content is JSON, but the file extension is **`.bm1`** (e.g.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `version` | string | yes | format version |
+| `version` | string | yes | format version; only the versions listed under [Supported format versions](#supported-format-versions) are accepted |
 | `title` | string | yes | composition title |
-| `bpm` | integer | yes | beats per minute |
+| `bpm` | integer > 0 | yes | beats per minute |
 | `stepsPerBeat` | integer > 0 | no (default `4`) | how many `pattern.steps` fit in one beat. See [Timing: from step to real time](#timing-from-step-to-real-time) |
 | `others` | array of `{key, value}` | no (default `[]`) | generic fields without enough identity to deserve their own dedicated field |
 
 `others` is also used to configure default values recognized by the format
 (see [Sample defaults](#sample-defaults-in-metadataothers)).
+
+### Supported format versions
+
+The tools currently accept format version **`1.0`**. A composition whose
+`metadata.version` is anything else is rejected instead of being read with
+the wrong assumptions. `bm version` prints the tool version and the supported
+format versions.
 
 ## `samples[]`
 
@@ -87,6 +94,9 @@ Each element of `steps` is:
 - `null` → silence at that step
 - a **full note**: `<letter A-G><octave 0-8><optional accidental # or b>`, e.g. `"C4"`, `"C4#"`, `"D3b"`
 
+Note letters are case-insensitive (`"c4#"` is accepted). Enharmonic spellings
+(`C4#` and `D4b`) are the same pitch.
+
 Each `step` lasts a fixed unit of time (the pattern's "grid"). The exact
 step↔real-time relationship is derived from `metadata.bpm` and
 `metadata.stepsPerBeat` — see [Timing: from step to real time](#timing-from-step-to-real-time).
@@ -126,6 +136,9 @@ Each element of `sequence` is:
 - `null` → gap/silence at that position (column)
 - the `id` of an element in `patterns[]`
 
+A `sequence` may be empty: that is a silent track, and it does not define any
+column of the grid.
+
 ### Synchronization between tracks (grid/column model)
 
 `arrangement` is thought of as a **grid**: each position `i` of `sequence`
@@ -145,10 +158,53 @@ is a "column" shared by every track.
    repetition and the next. There is no special case that forbids or
    reorders `null` at any position.
 
+## Validation rules
+
+A composition is accepted only if all of these hold (the checks are in
+`bm-format`, so every tool applies the same ones):
+
+- `metadata.version` is a supported format version, `metadata.bpm > 0` and
+  `metadata.stepsPerBeat > 0`.
+- `samples`, `patterns` and `arrangement.tracks` are each non-empty.
+- Ids are unique within their own list (samples, patterns, tracks).
+- Every `patterns[].sample` names an existing sample, and every non-`null`
+  `sequence` element names an existing pattern.
+- Every `steps` list has a length that is a multiple of 4, and every
+  non-`null` element is a valid full note (octave 0-8).
+- `rootNote` (when present) is a valid note name and `rootOctave` (when
+  present) is 0-8; the same goes for `sampleDefaultNote` and
+  `sampleDefaultOctave` in `metadata.others`.
+
+Malformed JSON (a missing required field, a wrong type) is reported
+separately, as a shape error, before these rules are checked. `bm
+check-integrity` runs all of this without touching the audio files; `bm
+check-samples` additionally checks that every sample file exists and is a
+well-formed `.wav`.
+
+## Playback semantics
+
+The format is played like a sampler/tracker. This is the reference behavior,
+so that every player and the editor agree:
+
+- Each sounding step **triggers its sample** at the start of that step
+  (`stepIndex * secondsPerStep`).
+- The sample is **pitch-shifted by resampling**, relative to its root note:
+  a note `n` semitones above the root plays at `2^(n/12)` times the speed, so
+  higher notes are shorter and lower notes are longer.
+- The sample **plays to its end**: a following step does not cut it off, and
+  the format has no note length or envelope. Voices that overlap are summed.
+- Audio is **mono**: stereo sample files are downmixed on load, and all tracks
+  are summed into one signal. If the sum would exceed full scale it is scaled
+  down so it does not clip.
+- Samples at other sample rates are converted to the output rate; this does
+  not change pitch or duration.
+
 ## Full example
 
 See [`player/demos/songs/song1.bm1`](../player/demos/songs/song1.bm1).
 
-## TODO / open items
+## Open items
 
 - Valid range for `steps.length` beyond "multiple of 4" (upper bound?).
+- Note length / envelope, and stereo placement, are not part of the format yet
+  (see *Playback semantics*); adding them would be a new format version.
