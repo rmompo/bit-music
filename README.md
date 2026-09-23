@@ -1,0 +1,55 @@
+# bit-music
+
+A JSON-based music composition format (reusable sound "chunks" chained
+across parallel tracks) plus the tools to edit and play it.
+
+The shared contract between all components — the shape of the JSON file —
+is documented in [`specs/format.md`](specs/format.md). Logic common to more
+than one component lives in reusable libraries under [`libs/`](libs/),
+described in [`specs/libraries.md`](specs/libraries.md). Each component
+documents its own implementation decisions in its own `specs/` folder.
+
+The demo audio is synthesized from code, not recorded or downloaded: see
+[`tools/gen-demo-samples`](tools/gen-demo-samples/) and
+[`player/demos/samples/`](player/demos/samples/).
+
+Build with the scripts in [`scripts/`](scripts/) (for example
+`scripts/build-windows.sh`), or `cargo test --workspace` to run every test.
+
+## Components
+
+### [`player/`](player/)
+Command-line player, built as the `bm` executable. Takes a composition file
+as an argument and plays it (`bm play song.bm1`); also supports validation
+subcommands (`check-integrity`, `check-samples`, `check`). Written in Rust,
+compiles to a native executable (Windows and Linux). See
+[`player/specs/`](player/specs/) for implementation details.
+
+### [`gui-player/`](gui-player/)
+Player with a graphical interface (egui/eframe, Windows and Linux). Under
+construction: it already opens a composition and shows its metadata, samples
+and patterns; the arrangement view and the transport are next. See
+[`gui-player/specs/`](gui-player/specs/).
+
+### [`gui-editor/`](gui-editor/)
+Editor for creating and modifying compositions without hand-writing the
+JSON: the gui-player with editing on top. *(Not implemented yet.)*
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this project by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.
+
+The licenses of the third-party libraries this project builds on are listed
+in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
