@@ -1,0 +1,71 @@
+{
+  "name": "bm",
+  "description": "bit-music composition player",
+  "usage": "bm <COMMAND> [ARGS]",
+  "commands": [
+    {
+      "name": "play",
+      "usage": "play <file.bm1> [--non-stop]",
+      "description": "Load, mix, and play a composition.",
+      "flags": [
+        {
+          "name": "--non-stop",
+          "description": "Loop playback continuously until interrupted with Ctrl+C or Escape."
+        }
+      ]
+    },
+    {
+      "name": "check-integrity",
+      "usage": "check-integrity <file.bm1>",
+      "description": "Validate the structure of a composition file (JSON schema, note formats, id references). Does not touch the referenced .wav files.",
+      "flags": []
+    },
+    {
+      "name": "check-samples",
+      "usage": "check-samples <file.bm1>",
+      "description": "Check that every sample file referenced by the composition is present on disk and a well-formed .wav.",
+      "flags": []
+    },
+    {
+      "name": "check",
+      "usage": "check <file.bm1>",
+      "description": "Run both check-integrity and check-samples.",
+      "flags": []
+    },
+    {
+      "name": "export",
+      "usage": "export <file.bm1> --wav",
+      "description": "Load, mix, and export a composition to an audio file with the same base name as the input, in the same directory (e.g. song1.bm1 -> song1.wav).",
+      "flags": [
+        {
+          "name": "--wav",
+          "description": "Export to .wav (currently the only supported format; mp3 is not implemented yet)."
+        }
+      ]
+    },
+    {
+      "name": "version",
+      "usage": "version",
+      "description": "Print the bm version.",
+      "flags": []
+    },
+    {
+      "name": "help",
+      "usage": "help",
+      "description": "Show this help text, loaded from bm.hlp next to the executable so it can be edited without recompiling (falls back to the copy embedded at build time if bm.hlp isn't found or isn't valid).",
+      "flags": []
+    },
+    {
+      "name": "magik",
+      "usage": "magik <file.bm1> [switches...]",
+      "description": "To be implemented. Automatically edits/improves a composition, writing the result to a new file rather than modifying the original. Its switches are not defined yet.",
+      "flags": []
+    }
+  ],
+  "examples": [
+    "bm play demos/songs/song1.bm1",
+    "bm play demos/songs/song1.bm1 --non-stop",
+    "bm check demos/songs/song1.bm1",
+    "bm export demos/songs/song1.bm1 --wav"
+  ]
+}

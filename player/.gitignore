@@ -1,0 +1,3 @@
+# bm export output (generated artifacts, not source)
+demos/songs/*.wav
+demos/songs/*.mp3

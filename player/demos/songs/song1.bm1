@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "title": "Demo",
+    "bpm": 120,
+    "others": [
+      { "key": "author", "value": "rmompo" },
+      { "key": "sampleDefaultNote", "value": "C" },
+      { "key": "sampleDefaultOctave", "value": "4" }
+    ]
+  },
+  "samples": [
+    { "id": "kick", "file": "../samples/kick.wav" },
+    { "id": "snare", "file": "../samples/snare.wav" },
+    { "id": "hihat", "file": "../samples/hihat.wav" },
+    { "id": "epiano", "file": "../samples/epiano.wav", "rootNote": "C", "rootOctave": 3 },
+    { "id": "sax", "file": "../samples/sax.wav", "rootNote": "C", "rootOctave": 3 }
+  ],
+  "patterns": [
+    {
+      "id": "kickA",
+      "sample": "kick",
+      "steps": ["C4", null, null, null, "C4", null, null, null]
+    },
+    {
+      "id": "snareA",
+      "sample": "snare",
+      "steps": [null, null, null, null, "C4", null, null, null]
+    },
+    {
+      "id": "hihatA",
+      "sample": "hihat",
+      "steps": ["C4", "C4", "C4", "C4", "C4", "C4", "C4", "C4"]
+    },
+    {
+      "id": "epianoA",
+      "sample": "epiano",
+      "steps": ["C3", null, "E3", null, "G3", null, "E3", null]
+    },
+    {
+      "id": "saxA",
+      "sample": "sax",
+      "steps": ["C4", "D4", "E4", "G4", "F4#", "D4", "C4", null, "C4", "D4", "E4", "G4"]
+    }
+  ],
+  "arrangement": {
+    "tracks": [
+      { "id": "kick", "sequence": ["kickA", "kickA"] },
+      { "id": "snare", "sequence": ["snareA", "snareA"] },
+      { "id": "hihat", "sequence": ["hihatA", "hihatA"] },
+      { "id": "epiano", "sequence": ["epianoA"] },
+      { "id": "sax", "sequence": ["saxA", null] }
+    ]
+  }
+}
