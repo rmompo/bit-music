@@ -12,7 +12,8 @@ pub mod pitch;
 use std::collections::HashMap;
 
 use bm_dsp::{self as dsp, AudioBuffer};
-use bm_format::model::Sample;
+use bm_format::model::{Pattern, Sample};
+use bm_format::note::{parse_note, Note};
 use bm_timeline::ResolvedArrangement;
 
 pub use pitch::{pitch_shift_for, PitchShift};
@@ -59,12 +60,7 @@ pub fn render_tracks(
 
                 let sample = samples_by_id[step.sample_id.as_str()];
                 let source = &audio[&step.sample_id];
-
-                let pitch_shift = pitch::pitch_shift_for(sample, &step.note);
-                // combined ratio: pitch-shift + conversion from the .wav's
-                // native sample rate to the output sample rate.
-                let rate_ratio = source.sample_rate as f64 / OUTPUT_SAMPLE_RATE as f64;
-                let voice = dsp::resample(&source.data, pitch_shift.ratio * rate_ratio);
+                let voice = render_voice(sample, source, &step.note);
 
                 let start = (index as f64 * frames_per_step).round() as usize;
                 dsp::mix_into(&mut buffer, &voice, start);
@@ -76,6 +72,42 @@ pub fn render_tracks(
             }
         })
         .collect()
+}
+
+/// One sounding note: the sample pitch-shifted to `note` and converted to
+/// [`OUTPUT_SAMPLE_RATE`] in a single resampling pass.
+fn render_voice(sample: &Sample, source: &AudioBuffer, note: &Note) -> Vec<f32> {
+    let pitch_shift = pitch::pitch_shift_for(sample, note);
+    // combined ratio: pitch-shift + conversion from the .wav's native
+    // sample rate to the output sample rate.
+    let rate_ratio = source.sample_rate as f64 / OUTPUT_SAMPLE_RATE as f64;
+    dsp::resample(&source.data, pitch_shift.ratio * rate_ratio)
+}
+
+/// Renders a single pattern on its own, once, from its first step (for
+/// auditioning it). `None` if its sample is unknown or not in `audio`.
+/// Steps that are not valid notes are skipped (validation rejects them
+/// before a composition gets this far).
+pub fn render_pattern(
+    pattern: &Pattern,
+    samples: &[Sample],
+    audio: &HashMap<String, AudioBuffer>,
+    seconds_per_step: f64,
+) -> Option<AudioBuffer> {
+    let sample = samples.iter().find(|s| s.id == pattern.sample)?;
+    let source = audio.get(&pattern.sample)?;
+    let frames_per_step = seconds_per_step * OUTPUT_SAMPLE_RATE as f64;
+
+    let mut buffer: Vec<f32> = Vec::new();
+    for (index, raw) in pattern.steps.iter().enumerate() {
+        let Some(raw) = raw else { continue };
+        let Ok(note) = parse_note(raw) else { continue };
+        let voice = render_voice(sample, source, &note);
+        let start = (index as f64 * frames_per_step).round() as usize;
+        dsp::mix_into(&mut buffer, &voice, start);
+    }
+    dsp::normalize(&mut buffer);
+    Some(AudioBuffer::new(buffer, OUTPUT_SAMPLE_RATE))
 }
 
 /// Sums the tracks into a single mono buffer, skipping the ones flagged in
@@ -150,5 +182,20 @@ mod tests {
 
         let none = mix_tracks(&tracks, &[true, true]);
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn a_pattern_renders_on_its_own_and_unknown_samples_give_none() {
+        let c = parse_composition(SONG).unwrap();
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 100], 44100));
+        let sps = 0.01;
+        let buf = render_pattern(&c.patterns[0], &c.samples, &audio, sps).unwrap();
+        assert_eq!(buf.sample_rate, OUTPUT_SAMPLE_RATE);
+        // two notes, the second starting 4 steps in
+        let start = (4.0 * sps * OUTPUT_SAMPLE_RATE as f64).round() as usize;
+        assert!(buf.data.len() >= start + 100);
+        assert!(buf.data[start] != 0.0);
+        assert!(render_pattern(&c.patterns[0], &c.samples, &HashMap::new(), sps).is_none());
     }
 }

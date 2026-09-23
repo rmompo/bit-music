@@ -1,7 +1,7 @@
 [package]
 name = "bm-session"
 description = "bit-music facade: open a project and get it ready to play or export"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

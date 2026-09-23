@@ -31,7 +31,7 @@ bit-music/
 | `bm-timeline` | Arrangement → per-track timeline (grid/column model, looping, silence padding) and `seconds_per_step`. Pure | `resolve` |
 | `bm-project` | Everything touching the file system for a composition: load a `.bm1`, resolve sample paths relative to it, report which samples are present/valid. Returns structured reports, never prints | `loader`, sample checks from `commands` |
 | `bm-render` | Timeline + decoded samples → one buffer per track and the master mix; pitch-shift per step | `mix`, `pitch` |
-| `bm-playback` | Audio device output (`cpal`): non-blocking engine with play/pause/stop/seek/loop, per-track mute, position exposed atomically | `playback` |
+| `bm-playback` | Audio device output (`cpal`): non-blocking engine with play/pause/stop/seek/loop, per-track mute, master volume, sample previews, position exposed atomically | `playback` |
 | `bm-session` | Thin facade "open a project and get everything ready to play/export". No logic of its own | `load_and_mix` in `commands` |
 
 What stays in each application (not shared): CLI help rendering, ANSI
@@ -81,11 +81,22 @@ Beyond moving code, the split added what a GUI and an editor need:
   with an optional mute list (`mix_tracks`).
 - `bm-playback` is non-blocking and real-time safe: position is an atomic
   counter, seeks are requests consumed by the callback, mute flags are
-  atomics, and there are no locks or allocations in the audio callback. Its
+  atomics, and there are no locks or allocations in the audio callback. It
+  also has a master volume and one-shot **previews** (`Engine::with_previews`
+  + `play_preview(index)`): short sounds that mix on top of the transport,
+  even when paused, for auditioning a sample or a pattern.
+- `bm-render` can also render a single pattern on its own (`render_pattern`). Its
   mixing logic is separated from `cpal` and unit-tested.
 - `bm-format` can serialize (`to_json`) as well as parse.
 
 Not yet done: solo per track, envelope/note duration, stereo.
+
+## Versioning
+
+Each library carries its own version in its `Cargo.toml` (not inherited from
+the workspace), bumped when its public API changes: `bm-playback` and
+`bm-render` are at 0.2.0 (previews, master volume, `render_pattern`); the
+rest are at 0.1.0. The GUI's *Tools > Libraries* window shows them.
 
 ## Licensing
 
