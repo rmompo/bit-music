@@ -1,0 +1,16 @@
+[package]
+name = "gui-player"
+description = "bit-music graphical player"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-format.workspace = true
+bm-playback.workspace = true
+bm-project.workspace = true
+bm-session.workspace = true
+bm-timeline.workspace = true
+eframe.workspace = true
+rfd.workspace = true
