@@ -1,2 +1,8 @@
 /target
 /dist
+
+# Signing material must never be committed
+*.key
+*.pfx
+*.p12
+*.crt

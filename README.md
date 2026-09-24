@@ -46,10 +46,14 @@ There is no CI workflow at the moment. To build the Windows executables, use
 `scripts/build-windows.sh` (and `scripts/package-windows.sh` for a zip).
 
 **The Windows binaries are not code-signed.** Windows 11 Smart App Control and
-SmartScreen can block unsigned programs; on a development machine, turning on
-Windows Developer Mode is enough to run them. How to bring back the CI and how
-to get signed binaries (SignPath Foundation) is documented in
-[`specs/ci-and-signing.md`](specs/ci-and-signing.md).
+SmartScreen can block unsigned programs. To run your own builds on your own
+machine without turning Smart App Control off, sign them with a self-signed
+certificate: `scripts/make-dev-cert.sh` creates it, `scripts/sign-windows.sh`
+signs the executables into `dist/signed/` (`scripts/build-signed-windows.sh`
+builds and signs in one step), and the certificate is installed once
+on Windows (with windows or from the console). How to bring back the CI, how to
+get signed binaries for distribution (SignPath Foundation) and the full
+signing guide are in [`specs/ci-and-signing.md`](specs/ci-and-signing.md).
 
 ## License
 
