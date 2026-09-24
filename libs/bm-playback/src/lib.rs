@@ -39,6 +39,33 @@ const NO_SEEK: usize = usize::MAX;
 /// Sentinel meaning "this preview is not playing".
 const IDLE: usize = usize::MAX;
 
+/// Length of the window shown by the scope methods, in seconds (half of it
+/// on each side of the current position).
+const SCOPE_SECONDS: f64 = 0.12;
+
+/// The audio around `center`, reduced to `points` values for drawing: each
+/// value is the sample of largest magnitude in its share of the window
+/// (`half` frames on each side of `center`), so peaks are not lost. Frames
+/// outside `data` count as silence.
+pub fn scope_window(data: &[f32], center: usize, half: usize, points: usize) -> Vec<f32> {
+    let total = half * 2;
+    let start = center as i64 - half as i64;
+    (0..points)
+        .map(|p| {
+            let lo = start + (p * total / points.max(1)) as i64;
+            let hi = start + ((p + 1) * total / points.max(1)) as i64;
+            let mut best = 0.0f32;
+            for i in lo..hi.max(lo + 1) {
+                let v = usize::try_from(i).ok().and_then(|i| data.get(i)).copied().unwrap_or(0.0);
+                if v.abs() > best.abs() {
+                    best = v;
+                }
+            }
+            best
+        })
+        .collect()
+}
+
 /// State shared between the controlling thread and the audio callback.
 /// Everything mutable is atomic; the audio data is immutable.
 struct Core {
@@ -299,6 +326,44 @@ impl Engine {
         (0..self.core.previews.len()).any(|i| self.core.preview_active(i))
     }
 
+    /// What track `index` is playing around the current position, as
+    /// `points` values for drawing an oscilloscope (scaled like the output:
+    /// with the mix gain and the master volume). Empty while nothing is
+    /// playing or when the track is muted.
+    pub fn track_scope(&self, index: usize, points: usize) -> Vec<f32> {
+        if !self.is_playing() || self.is_muted(index) {
+            return Vec::new();
+        }
+        let Some(track) = self.core.tracks.get(index) else {
+            return Vec::new();
+        };
+        let scale = self.core.gain * self.volume();
+        scope_window(track, self.core.current_position(), self.scope_half(), points)
+            .into_iter()
+            .map(|v| v * scale)
+            .collect()
+    }
+
+    /// The same for preview `index`: empty unless it is sounding.
+    pub fn preview_scope(&self, index: usize, points: usize) -> Vec<f32> {
+        let Some(pos) = self.core.preview_pos.get(index) else {
+            return Vec::new();
+        };
+        let position = pos.load(Ordering::Relaxed);
+        if position == IDLE {
+            return Vec::new();
+        }
+        let volume = self.volume();
+        scope_window(&self.core.previews[index], position, self.scope_half(), points)
+            .into_iter()
+            .map(|v| v * volume)
+            .collect()
+    }
+
+    fn scope_half(&self) -> usize {
+        (self.device_sample_rate as f64 * SCOPE_SECONDS / 2.0) as usize
+    }
+
     pub fn set_looping(&self, looping: bool) {
         self.core.looping.store(looping, Ordering::Relaxed);
     }
@@ -445,6 +510,20 @@ mod tests {
         // position already reflects the pending seek
         assert_eq!(c.current_position(), 2);
         assert_eq!(block(&c, 2, 1), vec![0.3, 0.4]);
+    }
+
+    #[test]
+    fn the_scope_window_keeps_peaks_and_pads_with_silence() {
+        let data = [0.0, 0.5, -0.9, 0.2, 0.0, 0.0];
+        // 4 frames each side of frame 2: frames -2..6, in 4 points of 2 frames.
+        let w = scope_window(&data, 2, 4, 4);
+        assert_eq!(w.len(), 4);
+        assert_eq!(w[0], 0.0); // frames -2, -1: before the start
+        assert_eq!(w[1], 0.5); // frames 0, 1
+        assert_eq!(w[2], -0.9); // frames 2, 3: the largest magnitude keeps its sign
+        assert_eq!(w[3], 0.0); // frames 4, 5
+        assert!(scope_window(&[], 0, 10, 8).iter().all(|v| *v == 0.0));
+        assert!(scope_window(&data, 2, 4, 0).is_empty());
     }
 
     #[test]
