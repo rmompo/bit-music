@@ -2,8 +2,12 @@
 //! confirmation shown by File > Quit.
 
 use eframe::egui::{self, RichText};
+use egui_phosphor::regular;
+use serde_json::Value;
 
+use crate::config::{self, Config, ControlType, SettingDef};
 use crate::panels::MIN_KEY_WIDTH;
+use crate::widgets::IconButton;
 
 /// Product name, as shown in the title bar and in About.
 pub const PRODUCT: &str = "bit-music gui-player";
@@ -36,23 +40,35 @@ impl Dialog {
     }
 }
 
+/// What closing the open dialog produced.
+#[derive(Debug, Default)]
+pub struct Outcome {
+    /// The user confirmed quitting.
+    pub quit: bool,
+    /// The user accepted (OK) the edited configuration of Tools > Settings.
+    pub settings: Option<Config>,
+}
+
 /// Shows the open dialog (if any) as a modal; clears it when the user
-/// closes it (Close button, Esc or a click outside). Returns `true` when
-/// the user confirmed quitting.
-pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) -> bool {
-    let Some(dialog) = *open else { return false };
+/// closes it (its buttons, Esc or a click outside). `draft` is the copy of
+/// the configuration being edited while Settings is open; it is handed back
+/// in the outcome on OK and dropped otherwise.
+pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<Config>) -> Outcome {
+    let Some(dialog) = *open else { return Outcome::default() };
     let mut close = false;
-    let mut quit = false;
+    let mut outcome = Outcome::default();
     // One id per dialog: egui remembers a window's size by id, and sharing
     // one would make a small dialog reopen as big as the largest one.
     let modal = egui::Modal::new(egui::Id::new(("app_dialog", dialog))).show(ctx, |ui| {
-        ui.set_width(400.0);
+        ui.set_width(if dialog == Dialog::Settings { 480.0 } else { 400.0 });
         ui.heading(dialog.title());
         ui.separator();
         match dialog {
             Dialog::Libraries => libraries_body(ui),
             Dialog::Settings => {
-                ui.label(RichText::new("There are no settings yet.").weak());
+                if let Some(draft) = draft.as_mut() {
+                    settings_body(ui, draft);
+                }
             }
             Dialog::About => about_body(ui),
             Dialog::ConfirmQuit => {
@@ -62,23 +78,134 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) -> bool {
         ui.add_space(8.0);
         // Action buttons always sit at the bottom right (right-to-left:
         // the first one added is the rightmost).
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if dialog == Dialog::ConfirmQuit {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                if ui.button("Quit").clicked() {
-                    quit = true;
-                }
-            } else if ui.button("Close").clicked() {
-                close = true;
+        match dialog {
+            Dialog::ConfirmQuit => {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    if ui.button("Quit").clicked() {
+                        outcome.quit = true;
+                    }
+                });
             }
-        });
+            Dialog::Settings => {
+                ui.horizontal(|ui| {
+                    if ui.button("Reset all to defaults").clicked() {
+                        if let Some(draft) = draft.as_mut() {
+                            draft.reset_user_settings();
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                        if ui.button("OK").clicked() {
+                            outcome.settings = draft.take();
+                            close = true;
+                        }
+                    });
+                });
+            }
+            _ => {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            }
+        }
     });
-    if quit || close || modal.should_close() {
+    if outcome.quit || close || modal.should_close() {
         *open = None;
+        *draft = None;
     }
-    quit
+    outcome
+}
+
+/// The body of Tools > Settings, built from the schema: one row per
+/// user-editable setting, with the control its `controlType` asks for and a
+/// button to restore its default.
+fn settings_body(ui: &mut egui::Ui, draft: &mut Config) {
+    egui::Grid::new("settings_grid")
+        .num_columns(3)
+        .spacing([16.0, 8.0])
+        .show(ui, |ui| {
+            for def in config::user_definitions() {
+                ui.vertical(|ui| {
+                    ui.set_width(260.0);
+                    ui.label(&def.title);
+                    if !def.description.is_empty() {
+                        ui.label(RichText::new(&def.description).weak().small());
+                    }
+                });
+                setting_control(ui, def, draft);
+                let changed = def.default.is_some() && draft.value(&def.key) != def.default;
+                let restore = ui
+                    .add_enabled(changed, IconButton::new(regular::ARROW_COUNTER_CLOCKWISE))
+                    .on_hover_text("Restore default");
+                if restore.clicked() {
+                    if let Some(default) = &def.default {
+                        draft.set(&def.key, default.clone());
+                    }
+                }
+                ui.end_row();
+            }
+
+            ui.label("Recent files");
+            ui.label(RichText::new(format!("{} in the history", draft.last_opened.len())).weak());
+            if ui
+                .add_enabled(!draft.last_opened.is_empty(), egui::Button::new("Clear history"))
+                .clicked()
+            {
+                draft.last_opened.clear();
+            }
+            ui.end_row();
+        });
+}
+
+/// The editing widget of one setting, according to its control type.
+fn setting_control(ui: &mut egui::Ui, def: &SettingDef, draft: &mut Config) {
+    let current = draft.value(&def.key);
+    let range = def.min.unwrap_or(i64::MIN)..=def.max.unwrap_or(i64::MAX);
+    match (def.control_type, current) {
+        (Some(ControlType::Spinner), Some(Value::Number(n))) => {
+            let mut v = n.as_i64().unwrap_or_default();
+            if ui.add(egui::DragValue::new(&mut v).range(range)).changed() {
+                draft.set(&def.key, Value::from(v));
+            }
+        }
+        (Some(ControlType::Slider), Some(Value::Number(n))) => {
+            let mut v = n.as_i64().unwrap_or_default();
+            if ui.add(egui::Slider::new(&mut v, range)).changed() {
+                draft.set(&def.key, Value::from(v));
+            }
+        }
+        (Some(ControlType::Checkbox), Some(Value::Bool(mut b))) => {
+            if ui.checkbox(&mut b, "").changed() {
+                draft.set(&def.key, Value::Bool(b));
+            }
+        }
+        (Some(ControlType::Input), Some(Value::String(mut text))) => {
+            if ui.text_edit_singleline(&mut text).changed() {
+                draft.set(&def.key, Value::String(text));
+            }
+        }
+        (Some(ControlType::Combo), Some(Value::String(selected))) => {
+            egui::ComboBox::from_id_salt(&def.key)
+                .selected_text(&selected)
+                .show_ui(ui, |ui| {
+                    for choice in def.choices.iter().filter_map(Value::as_str) {
+                        if ui.selectable_label(selected == choice, choice).clicked() {
+                            draft.set(&def.key, Value::String(choice.to_string()));
+                        }
+                    }
+                });
+        }
+        _ => {
+            ui.label(RichText::new("(unavailable)").weak());
+        }
+    }
 }
 
 /// A name / version table that fills the whole width of the window.
@@ -161,7 +288,8 @@ mod tests {
     fn every_dialog_draws() {
         for d in [Dialog::Libraries, Dialog::Settings, Dialog::About, Dialog::ConfirmQuit] {
             let mut open = Some(d);
-            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open)));
+            let mut draft = Some(Config::default().with_defaults());
+            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft).quit));
             assert_eq!(open, Some(d));
         }
     }

@@ -1,10 +1,14 @@
 //! `gui-player.json`: settings and history, stored next to the executable.
 //!
-//! Its structure is described by `gui-player.schema.json` (embedded in the
-//! executable), which is also where the default of every setting comes
-//! from. If the file does not exist it is created with those defaults.
+//! The file only holds current values. Everything else about a setting —
+//! whether the user can edit it, its title, data type, control, limits and
+//! default — is defined in `gui-player.schema.json`, which is embedded in
+//! the executable. If the file does not exist it is created with the
+//! defaults.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,18 +16,153 @@ use serde_json::Value;
 /// The schema of the configuration file.
 pub const SCHEMA: &str = include_str!("../gui-player.schema.json");
 pub const CONFIG_FILE: &str = "gui-player.json";
-/// Setting: maximum number of entries kept in `lastOpened`.
-pub const MAX_LAST_OPENED: &str = "maxLastOpened";
 
+pub const MAX_LAST_OPENED: &str = "maxLastOpened";
 pub const WINDOW_MAXIMIZED: &str = "windowMaximized";
 pub const WINDOW_X: &str = "windowX";
 pub const WINDOW_Y: &str = "windowY";
 pub const WINDOW_WIDTH: &str = "windowWidth";
 pub const WINDOW_HEIGHT: &str = "windowHeight";
 pub const TABS_WIDTH_PERCENT: &str = "tabsWidthPercent";
-pub const TOP_HEIGHT_PERCENT: &str = "topHeightPercent";
-const DEFAULT_WIDTH: i32 = 1100;
-const DEFAULT_HEIGHT: i32 = 720;
+pub const ARRANGEMENT_HEIGHT_PERCENT: &str = "arrangementHeightPercent";
+
+// ----- schema ------------------------------------------------------------
+
+/// Whether the user can change a setting in Tools > Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum SettingType {
+    #[serde(rename = "USER")]
+    User,
+    #[serde(rename = "SYSTEM")]
+    System,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataType {
+    Integer,
+    Boolean,
+    String,
+}
+
+/// The widget Tools > Settings uses to edit a setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ControlType {
+    Input,
+    Spinner,
+    Slider,
+    Checkbox,
+    Combo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawDefinition {
+    setting_type: SettingType,
+    setting_title: Option<String>,
+    setting_description: Option<String>,
+    data_type: DataType,
+    control_type: Option<ControlType>,
+    #[serde(default)]
+    values: RawValues,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawValues {
+    min_value: Option<i64>,
+    max_value: Option<i64>,
+    enum_value: Option<Vec<Value>>,
+    default_value: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct RawSchema {
+    settings: BTreeMap<String, RawDefinition>,
+}
+
+/// One entry of the schema.
+#[derive(Debug, Clone)]
+pub struct SettingDef {
+    pub key: String,
+    pub setting_type: SettingType,
+    pub title: String,
+    pub description: String,
+    pub data_type: DataType,
+    pub control_type: Option<ControlType>,
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    /// The allowed values when the setting is a choice (empty otherwise).
+    pub choices: Vec<Value>,
+    /// `None` for entries without a meaningful default.
+    pub default: Option<Value>,
+}
+
+impl SettingDef {
+    /// Converts `value` to this setting's type (accepting text such as
+    /// `"10"` or `"true"`) and checks it against the limits and the
+    /// choices. `None` if it is not acceptable.
+    pub fn coerce(&self, value: &Value) -> Option<Value> {
+        let converted = match self.data_type {
+            DataType::Integer => {
+                let n = match value {
+                    Value::Number(n) => n.as_i64()?,
+                    Value::String(s) => s.trim().parse().ok()?,
+                    _ => return None,
+                };
+                if self.min.is_some_and(|m| n < m) || self.max.is_some_and(|m| n > m) {
+                    return None;
+                }
+                Value::from(n)
+            }
+            DataType::Boolean => match value {
+                Value::Bool(b) => Value::Bool(*b),
+                Value::String(s) => Value::Bool(s.trim().parse().ok()?),
+                _ => return None,
+            },
+            DataType::String => match value {
+                Value::String(s) => Value::String(s.clone()),
+                _ => return None,
+            },
+        };
+        (self.choices.is_empty() || self.choices.contains(&converted)).then_some(converted)
+    }
+}
+
+/// Every setting the schema defines, in key order.
+pub fn definitions() -> &'static [SettingDef] {
+    static DEFS: OnceLock<Vec<SettingDef>> = OnceLock::new();
+    DEFS.get_or_init(|| {
+        let raw: RawSchema = serde_json::from_str(SCHEMA).expect("the embedded schema is valid");
+        raw.settings
+            .into_iter()
+            .map(|(key, d)| SettingDef {
+                title: d.setting_title.unwrap_or_else(|| key.clone()),
+                description: d.setting_description.unwrap_or_default(),
+                key,
+                setting_type: d.setting_type,
+                data_type: d.data_type,
+                control_type: d.control_type,
+                min: d.values.min_value,
+                max: d.values.max_value,
+                choices: d.values.enum_value.unwrap_or_default(),
+                default: d.values.default_value,
+            })
+            .collect()
+    })
+}
+
+pub fn definition(key: &str) -> Option<&'static SettingDef> {
+    definitions().iter().find(|d| d.key == key)
+}
+
+/// The settings the user can edit in Tools > Settings.
+pub fn user_definitions() -> impl Iterator<Item = &'static SettingDef> {
+    definitions().iter().filter(|d| d.setting_type == SettingType::User)
+}
+
+// ----- values ------------------------------------------------------------
 
 /// How the window was left: maximized, or restored with a position (when
 /// the system tells it) and a size.
@@ -36,17 +175,67 @@ pub struct WindowState {
 }
 
 /// Where the dividers were left, as percentages: A's share of the width of
-/// A + B, and the share of the height taken by A + B (the rest is C).
+/// A + B, and C's share of the height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DividerState {
     pub tabs_width_percent: i32,
-    pub top_height_percent: i32,
+    pub arrangement_height_percent: i32,
+}
+
+/// How far the dividers can be dragged (the limits of their schema
+/// entries), in percent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DividerLimits {
+    pub tabs_width: (i32, i32),
+    pub arrangement_height: (i32, i32),
+}
+
+fn limits_of(key: &str) -> (i32, i32) {
+    let def = definition(key).expect("divider settings are in the schema");
+    (def.min.unwrap_or(10) as i32, def.max.unwrap_or(90) as i32)
+}
+
+fn default_int(key: &str) -> i32 {
+    definition(key)
+        .and_then(|d| d.default.as_ref())
+        .and_then(Value::as_i64)
+        .expect("this setting has an integer default in the schema") as i32
+}
+
+impl Default for DividerLimits {
+    fn default() -> Self {
+        Self {
+            tabs_width: limits_of(TABS_WIDTH_PERCENT),
+            arrangement_height: limits_of(ARRANGEMENT_HEIGHT_PERCENT),
+        }
+    }
+}
+
+impl DividerLimits {
+    /// Allowed range for A's width share, as `(min, max)`.
+    pub fn tabs_width_range(&self) -> (f32, f32) {
+        (self.tabs_width.0 as f32, self.tabs_width.1 as f32)
+    }
+
+    /// Allowed range for C's height share, as `(min, max)`.
+    pub fn arrangement_height_range(&self) -> (f32, f32) {
+        (self.arrangement_height.0 as f32, self.arrangement_height.1 as f32)
+    }
 }
 
 impl Default for DividerState {
     fn default() -> Self {
-        Self { tabs_width_percent: 30, top_height_percent: 50 }
+        Self {
+            tabs_width_percent: default_int(TABS_WIDTH_PERCENT),
+            arrangement_height_percent: default_int(ARRANGEMENT_HEIGHT_PERCENT),
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Setting {
+    pub key: String,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,37 +247,9 @@ pub struct KeyValue {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub settings: Vec<KeyValue>,
+    pub settings: Vec<Setting>,
     #[serde(rename = "lastOpened")]
     pub last_opened: Vec<KeyValue>,
-}
-
-/// The `x-settings` section of the schema: one entry per known setting.
-fn setting_specs() -> serde_json::Map<String, Value> {
-    let schema: Value = serde_json::from_str(SCHEMA).expect("the embedded schema is valid JSON");
-    schema["properties"]["settings"]["x-settings"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default()
-}
-
-fn value_text(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-/// Whether `text` is acceptable for a setting described by `spec`.
-fn is_valid(spec: &Value, text: &str) -> bool {
-    match spec["type"].as_str() {
-        Some("integer") => text.parse::<i64>().is_ok_and(|n| {
-            spec["minimum"].as_i64().is_none_or(|min| n >= min)
-                && spec["maximum"].as_i64().is_none_or(|max| n <= max)
-        }),
-        Some("boolean") => text.parse::<bool>().is_ok(),
-        _ => true,
-    }
 }
 
 impl Config {
@@ -129,84 +290,30 @@ impl Config {
         }
     }
 
-    /// Adds every setting that is missing and resets the invalid ones to
-    /// their default from the schema.
-    ///
-    /// A setting without a `default` in the schema is optional: it is not
-    /// added when missing, and an invalid value is removed.
+    /// Normalizes every setting against the schema: values are converted to
+    /// their type, invalid ones are reset to their default (or removed when
+    /// there is none), and missing ones are added with their default.
+    /// Settings the schema does not know are kept.
     pub fn with_defaults(mut self) -> Self {
-        for (key, spec) in setting_specs() {
-            let default = spec.get("default").map(value_text);
-            match (self.settings.iter_mut().find(|s| s.key == key), default) {
-                (Some(s), _) if is_valid(&spec, &s.value) => {}
-                (Some(s), Some(default)) => s.value = default,
-                (Some(_), None) => self.settings.retain(|s| s.key != key),
-                (None, Some(default)) => self.settings.push(KeyValue { key, value: default }),
+        for def in definitions() {
+            let position = self.settings.iter().position(|s| s.key == def.key);
+            match (position, &def.default) {
+                (Some(i), default) => match def.coerce(&self.settings[i].value) {
+                    Some(v) => self.settings[i].value = v,
+                    None => match default {
+                        Some(d) => self.settings[i].value = d.clone(),
+                        None => {
+                            self.settings.remove(i);
+                        }
+                    },
+                },
+                (None, Some(d)) => {
+                    self.settings.push(Setting { key: def.key.clone(), value: d.clone() });
+                }
                 (None, None) => {}
             }
         }
         self
-    }
-
-    /// Sets a setting, adding it if it is not there yet.
-    pub fn set_setting(&mut self, key: &str, value: String) {
-        match self.settings.iter_mut().find(|s| s.key == key) {
-            Some(s) => s.value = value,
-            None => self.settings.push(KeyValue { key: key.to_string(), value }),
-        }
-    }
-
-    fn remove_setting(&mut self, key: &str) {
-        self.settings.retain(|s| s.key != key);
-    }
-
-    fn int_setting(&self, key: &str) -> Option<i32> {
-        self.setting(key)?.parse().ok()
-    }
-
-    /// The window state stored in the settings.
-    pub fn window(&self) -> WindowState {
-        let position = match (self.int_setting(WINDOW_X), self.int_setting(WINDOW_Y)) {
-            (Some(x), Some(y)) => Some((x, y)),
-            _ => None,
-        };
-        WindowState {
-            maximized: self.setting(WINDOW_MAXIMIZED).is_none_or(|v| v == "true"),
-            position,
-            width: self.int_setting(WINDOW_WIDTH).unwrap_or(DEFAULT_WIDTH),
-            height: self.int_setting(WINDOW_HEIGHT).unwrap_or(DEFAULT_HEIGHT),
-        }
-    }
-
-    /// The divider positions stored in the settings.
-    pub fn dividers(&self) -> DividerState {
-        let d = DividerState::default();
-        DividerState {
-            tabs_width_percent: self.int_setting(TABS_WIDTH_PERCENT).unwrap_or(d.tabs_width_percent),
-            top_height_percent: self.int_setting(TOP_HEIGHT_PERCENT).unwrap_or(d.top_height_percent),
-        }
-    }
-
-    pub fn set_dividers(&mut self, d: &DividerState) {
-        self.set_setting(TABS_WIDTH_PERCENT, d.tabs_width_percent.to_string());
-        self.set_setting(TOP_HEIGHT_PERCENT, d.top_height_percent.to_string());
-    }
-
-    /// Stores the window state in the settings.
-    pub fn set_window(&mut self, w: &WindowState) {
-        self.set_setting(WINDOW_MAXIMIZED, w.maximized.to_string());
-        match w.position {
-            Some((x, y)) => {
-                self.set_setting(WINDOW_X, x.to_string());
-                self.set_setting(WINDOW_Y, y.to_string());
-            }
-            None => {
-                self.remove_setting(WINDOW_X);
-                self.remove_setting(WINDOW_Y);
-            }
-        }
-        self.set_setting(WINDOW_WIDTH, w.width.to_string());
-        self.set_setting(WINDOW_HEIGHT, w.height.to_string());
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -215,16 +322,111 @@ impl Config {
         std::fs::write(path, text)
     }
 
-    pub fn setting(&self, key: &str) -> Option<&str> {
-        self.settings.iter().find(|s| s.key == key).map(|s| s.value.as_str())
+    /// The stored value of `key`, or its schema default.
+    pub fn value(&self, key: &str) -> Option<Value> {
+        self.settings
+            .iter()
+            .find(|s| s.key == key)
+            .map(|s| s.value.clone())
+            .or_else(|| definition(key)?.default.clone())
     }
 
-    /// The maximum size of the history (setting, or its schema default).
+    pub fn int(&self, key: &str) -> Option<i64> {
+        self.value(key)?.as_i64()
+    }
+
+    pub fn flag(&self, key: &str) -> Option<bool> {
+        self.value(key)?.as_bool()
+    }
+
+    /// Sets a setting, adding it if it is not there yet.
+    pub fn set(&mut self, key: &str, value: Value) {
+        match self.settings.iter_mut().find(|s| s.key == key) {
+            Some(s) => s.value = value,
+            None => self.settings.push(Setting { key: key.to_string(), value }),
+        }
+    }
+
+    fn remove(&mut self, key: &str) {
+        self.settings.retain(|s| s.key != key);
+    }
+
+    /// Puts every user-editable setting back to its default.
+    pub fn reset_user_settings(&mut self) {
+        for def in user_definitions() {
+            if let Some(default) = &def.default {
+                self.set(&def.key, default.clone());
+            }
+        }
+    }
+
+    /// Takes the user-editable settings and the history from `edited` (the
+    /// result of the Settings dialog), then applies their consequences.
+    pub fn adopt_user_settings(&mut self, edited: &Config) {
+        for def in user_definitions() {
+            if let Some(v) = edited.value(&def.key) {
+                self.set(&def.key, v);
+            }
+        }
+        self.last_opened = edited.last_opened.clone();
+        self.trim_history();
+    }
+
+    /// The window state stored in the settings.
+    pub fn window(&self) -> WindowState {
+        let position = match (self.int(WINDOW_X), self.int(WINDOW_Y)) {
+            (Some(x), Some(y)) => Some((x as i32, y as i32)),
+            _ => None,
+        };
+        WindowState {
+            maximized: self.flag(WINDOW_MAXIMIZED).unwrap_or(true),
+            position,
+            width: self.int(WINDOW_WIDTH).unwrap_or(1100) as i32,
+            height: self.int(WINDOW_HEIGHT).unwrap_or(720) as i32,
+        }
+    }
+
+    /// Stores the window state in the settings.
+    pub fn set_window(&mut self, w: &WindowState) {
+        self.set(WINDOW_MAXIMIZED, Value::from(w.maximized));
+        match w.position {
+            Some((x, y)) => {
+                self.set(WINDOW_X, Value::from(x));
+                self.set(WINDOW_Y, Value::from(y));
+            }
+            None => {
+                self.remove(WINDOW_X);
+                self.remove(WINDOW_Y);
+            }
+        }
+        self.set(WINDOW_WIDTH, Value::from(w.width));
+        self.set(WINDOW_HEIGHT, Value::from(w.height));
+    }
+
+    /// The divider positions stored in the settings.
+    pub fn dividers(&self) -> DividerState {
+        let d = DividerState::default();
+        DividerState {
+            tabs_width_percent: self.int(TABS_WIDTH_PERCENT).map_or(d.tabs_width_percent, |v| v as i32),
+            arrangement_height_percent: self
+                .int(ARRANGEMENT_HEIGHT_PERCENT)
+                .map_or(d.arrangement_height_percent, |v| v as i32),
+        }
+    }
+
+    pub fn set_dividers(&mut self, d: &DividerState) {
+        self.set(TABS_WIDTH_PERCENT, Value::from(d.tabs_width_percent));
+        self.set(ARRANGEMENT_HEIGHT_PERCENT, Value::from(d.arrangement_height_percent));
+    }
+
+    /// The maximum size of the history.
     pub fn max_last_opened(&self) -> usize {
-        self.setting(MAX_LAST_OPENED)
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|n| *n >= 1)
-            .unwrap_or(10)
+        self.int(MAX_LAST_OPENED).filter(|n| *n >= 1).unwrap_or(10) as usize
+    }
+
+    /// Drops the oldest history entries beyond the maximum.
+    pub fn trim_history(&mut self) {
+        self.last_opened.truncate(self.max_last_opened());
     }
 
     /// Puts `path` first (most recent; moving it if it was already there)
@@ -232,7 +434,7 @@ impl Config {
     pub fn record_opened(&mut self, path: &str) {
         self.last_opened.retain(|e| e.key != path);
         self.last_opened.insert(0, KeyValue { key: path.to_string(), value: path.to_string() });
-        self.last_opened.truncate(self.max_last_opened());
+        self.trim_history();
     }
 }
 
@@ -246,41 +448,100 @@ mod tests {
         dir.join(CONFIG_FILE)
     }
 
+    fn defaults() -> Config {
+        Config::default().with_defaults()
+    }
+
     #[test]
-    fn the_embedded_schema_is_valid_and_defines_the_history_limit() {
-        let specs = setting_specs();
-        assert_eq!(specs[MAX_LAST_OPENED]["default"], 10);
+    fn the_schema_is_coherent() {
+        assert!(!definitions().is_empty());
+        for d in definitions() {
+            let what = &d.key;
+            if let (Some(min), Some(max)) = (d.min, d.max) {
+                assert!(min <= max, "{what}: minValue > maxValue");
+            }
+            if let Some(default) = &d.default {
+                assert_eq!(d.coerce(default).as_ref(), Some(default), "{what}: defaultValue is not valid");
+            }
+            match (d.setting_type, d.control_type) {
+                (SettingType::User, None) => panic!("{what}: a USER setting needs a controlType"),
+                (SettingType::User, Some(_)) => {
+                    assert!(!d.title.is_empty(), "{what}: a USER setting needs a title");
+                    assert!(d.default.is_some(), "{what}: a USER setting needs a defaultValue");
+                }
+                (SettingType::System, _) => {}
+            }
+            if let Some(control) = d.control_type {
+                let compatible = match d.data_type {
+                    DataType::Integer => matches!(control, ControlType::Spinner | ControlType::Slider),
+                    DataType::Boolean => control == ControlType::Checkbox,
+                    DataType::String => matches!(control, ControlType::Input | ControlType::Combo),
+                };
+                assert!(compatible, "{what}: {control:?} does not fit {:?}", d.data_type);
+                if control == ControlType::Slider {
+                    assert!(d.min.is_some() && d.max.is_some(), "{what}: a slider needs minValue and maxValue");
+                }
+                assert_eq!(control == ControlType::Combo, !d.choices.is_empty(), "{what}: enumValue and combo go together");
+            }
+        }
+    }
+
+    #[test]
+    fn the_history_limit_is_the_only_user_setting_for_now() {
+        let user: Vec<&str> = user_definitions().map(|d| d.key.as_str()).collect();
+        assert_eq!(user, [MAX_LAST_OPENED]);
+    }
+
+    #[test]
+    fn entries_without_a_default_are_not_added() {
+        let config = defaults();
+        assert_eq!(config.value(WINDOW_X), None);
+        assert_eq!(config.window().position, None);
+        assert_eq!(config.max_last_opened(), 10);
+    }
+
+    #[test]
+    fn values_are_typed_and_text_from_older_files_is_accepted() {
+        let config: Config = serde_json::from_str(
+            r#"{"settings":[{"key":"maxLastOpened","value":"7"},{"key":"windowMaximized","value":"false"}]}"#,
+        )
+        .unwrap();
+        let config = config.with_defaults();
+        assert_eq!(config.value(MAX_LAST_OPENED), Some(Value::from(7)));
+        assert_eq!(config.value(WINDOW_MAXIMIZED), Some(Value::Bool(false)));
     }
 
     #[test]
     fn the_window_opens_maximized_by_default_and_round_trips() {
-        let mut config = Config::default().with_defaults();
+        let mut config = defaults();
         let w = config.window();
         assert!(w.maximized);
         assert_eq!((w.width, w.height, w.position), (1100, 720, None));
-        // Position is optional: it is not written until known.
-        assert_eq!(config.setting(WINDOW_X), None);
 
         let restored = WindowState { maximized: false, position: Some((-20, 40)), width: 900, height: 600 };
         config.set_window(&restored);
         assert_eq!(config.window(), restored);
-        // Survives the schema check.
         assert_eq!(config.clone().with_defaults().window(), restored);
         // A too-small size is reset to the default.
-        config.set_setting(WINDOW_WIDTH, "10".into());
+        config.set(WINDOW_WIDTH, Value::from(10));
         assert_eq!(config.with_defaults().window().width, 1100);
     }
 
     #[test]
-    fn dividers_default_to_30_70_and_50_50_and_round_trip() {
-        let mut config = Config::default().with_defaults();
-        assert_eq!(config.dividers(), DividerState { tabs_width_percent: 30, top_height_percent: 50 });
-        let moved = DividerState { tabs_width_percent: 45, top_height_percent: 62 };
+    fn dividers_default_and_are_limited_by_their_schema_entries() {
+        let mut config = defaults();
+        assert_eq!(config.dividers(), DividerState { tabs_width_percent: 30, arrangement_height_percent: 50 });
+        let limits = DividerLimits::default();
+        assert_eq!(limits.tabs_width_range(), (30.0, 50.0));
+        assert_eq!(limits.arrangement_height_range(), (50.0, 75.0));
+
+        let moved = DividerState { tabs_width_percent: 45, arrangement_height_percent: 62 };
         config.set_dividers(&moved);
         assert_eq!(config.clone().with_defaults().dividers(), moved);
-        // Out of range values are reset to their default.
-        config.set_setting(TABS_WIDTH_PERCENT, "99".into());
-        assert_eq!(config.with_defaults().dividers().tabs_width_percent, 30);
+        // Outside the limits: back to the default.
+        config.set(TABS_WIDTH_PERCENT, Value::from(60));
+        config.set(ARRANGEMENT_HEIGHT_PERCENT, Value::from(20));
+        assert_eq!(config.with_defaults().dividers(), DividerState::default());
     }
 
     #[test]
@@ -288,20 +549,19 @@ mod tests {
         let path = temp_file("create");
         let (config, warning) = Config::load_or_create(&path);
         assert!(warning.is_none());
-        assert_eq!(config.setting(MAX_LAST_OPENED), Some("10"));
+        assert_eq!(config.int(MAX_LAST_OPENED), Some(10));
         assert!(config.last_opened.is_empty());
         let on_disk: Config = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(on_disk, config);
     }
 
     #[test]
-    fn missing_or_invalid_settings_fall_back_to_their_default() {
+    fn invalid_settings_fall_back_to_their_default_and_unknown_ones_are_kept() {
         let path = temp_file("defaults");
         std::fs::write(&path, r#"{"settings":[{"key":"maxLastOpened","value":"zero"},{"key":"other","value":"x"}]}"#).unwrap();
         let (config, _) = Config::load_or_create(&path);
-        assert_eq!(config.setting(MAX_LAST_OPENED), Some("10"));
-        // Unknown settings are kept.
-        assert_eq!(config.setting("other"), Some("x"));
+        assert_eq!(config.int(MAX_LAST_OPENED), Some(10));
+        assert_eq!(config.value("other"), Some(Value::from("x")));
     }
 
     #[test]
@@ -316,13 +576,34 @@ mod tests {
 
     #[test]
     fn history_is_newest_first_up_to_the_limit_without_duplicates() {
-        let mut config = Config::default().with_defaults();
-        config.settings.iter_mut().find(|s| s.key == MAX_LAST_OPENED).unwrap().value = "3".into();
+        let mut config = defaults();
+        config.set(MAX_LAST_OPENED, Value::from(3));
         for p in ["a", "b", "c", "a", "d"] {
             config.record_opened(p);
         }
         let keys: Vec<&str> = config.last_opened.iter().map(|e| e.key.as_str()).collect();
-        assert_eq!(keys, ["d", "a", "c"]); // newest first
+        assert_eq!(keys, ["d", "a", "c"]);
         assert!(config.last_opened.iter().all(|e| e.key == e.value));
+    }
+
+    #[test]
+    fn settings_dialog_results_are_adopted_and_reset_all_restores_defaults() {
+        let mut config = defaults();
+        for p in ["a", "b", "c"] {
+            config.record_opened(p);
+        }
+        let mut edited = config.clone();
+        edited.set(MAX_LAST_OPENED, Value::from(2));
+        config.adopt_user_settings(&edited);
+        assert_eq!(config.max_last_opened(), 2);
+        assert_eq!(config.last_opened.len(), 2); // trimmed by the new limit
+
+        edited.reset_user_settings();
+        assert_eq!(edited.max_last_opened(), 10);
+        // System state is not touched by "reset all".
+        let mut moved = defaults();
+        moved.set(TABS_WIDTH_PERCENT, Value::from(45));
+        moved.reset_user_settings();
+        assert_eq!(moved.int(TABS_WIDTH_PERCENT), Some(45));
     }
 }

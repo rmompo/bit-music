@@ -20,15 +20,13 @@ pub const MIN_KEY_WIDTH: f32 = 130.0;
 
 /// Smallest size of either side of a divider, in points.
 const MIN_PANEL_SIZE: f32 = 120.0;
-/// Limits of a divider, in percent (same as in the configuration schema).
-pub const DIVIDER_PERCENT_RANGE: std::ops::RangeInclusive<i32> = 10..=90;
-
-/// Keeps a divider position within the schema's range and leaves at least
-/// [`MIN_PANEL_SIZE`] points on each side of `total`.
-pub fn clamp_percent(percent: f32, total: f32) -> f32 {
+/// Keeps a divider position within `(min, max)` (the limits of its schema
+/// entry) and leaves at least [`MIN_PANEL_SIZE`] points on each side of
+/// `total`.
+pub fn clamp_percent(percent: f32, total: f32, (min, max): (f32, f32)) -> f32 {
     let min_by_size = (MIN_PANEL_SIZE / total.max(1.0) * 100.0).min(50.0);
-    let lo = (*DIVIDER_PERCENT_RANGE.start() as f32).max(min_by_size);
-    let hi = (*DIVIDER_PERCENT_RANGE.end() as f32).min(100.0 - min_by_size);
+    let lo = min.max(min_by_size);
+    let hi = max.min(100.0 - min_by_size);
     percent.clamp(lo, hi.max(lo))
 }
 
@@ -92,7 +90,8 @@ pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
     let edge = tabs.response.rect;
     let delta = splitter(ui, "tabs_splitter", edge.right_top(), edge.height(), Axis::Vertical);
     if total > 0.0 {
-        view.tabs_width_percent = clamp_percent(view.tabs_width_percent + delta / total * 100.0, total);
+        let range = view.divider_limits.tabs_width_range();
+        view.tabs_width_percent = clamp_percent(view.tabs_width_percent + delta / total * 100.0, total, range);
     }
     egui::CentralPanel::default().show(ui, |ui| {
         scroll(ui, "properties_scroll", |ui| properties(ui, l, view));
@@ -381,11 +380,13 @@ mod tests {
 
     #[test]
     fn divider_percentages_stay_in_range_and_leave_room_on_both_sides() {
-        assert_eq!(clamp_percent(5.0, 1000.0), 12.0); // 120 pt minimum wins over 10 %
-        assert_eq!(clamp_percent(50.0, 1000.0), 50.0);
-        assert_eq!(clamp_percent(99.0, 1000.0), 88.0);
-        // Tiny totals cannot leave 120 pt on each side: stay centered-ish.
-        assert!(clamp_percent(30.0, 100.0) >= 10.0);
+        let wide = (10.0, 90.0);
+        assert_eq!(clamp_percent(5.0, 1000.0, wide), 12.0); // 120 pt minimum wins over 10 %
+        assert_eq!(clamp_percent(50.0, 1000.0, wide), 50.0);
+        assert_eq!(clamp_percent(99.0, 1000.0, wide), 88.0);
+        // The limits of the setting narrow it further.
+        assert_eq!(clamp_percent(10.0, 1000.0, (30.0, 50.0)), 30.0);
+        assert_eq!(clamp_percent(80.0, 1000.0, (30.0, 50.0)), 50.0);
     }
 
     #[test]

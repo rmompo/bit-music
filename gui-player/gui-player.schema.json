@@ -1,77 +1,63 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "gui-player configuration",
-  "description": "Structure of gui-player.json, which lives next to the executable. gui-player creates it (filled with the defaults below) when it does not exist.",
-  "type": "object",
-  "properties": {
-    "settings": {
-      "description": "User settings as a list of {key, value} pairs. Values are stored as text and checked against the type of their entry in x-settings; a missing or invalid value falls back to its default.",
-      "type": "array",
-      "items": { "$ref": "#/$defs/keyValue" },
-      "x-settings": {
-        "maxLastOpened": {
-          "description": "Maximum number of files kept in lastOpened (the oldest are dropped).",
-          "type": "integer",
-          "minimum": 1,
-          "default": 10
-        },
-        "windowMaximized": {
-          "description": "Whether the window was left maximized. When false, the window opens restored, at windowX/windowY with windowWidth x windowHeight.",
-          "type": "boolean",
-          "default": true
-        },
-        "windowX": {
-          "description": "Horizontal position of the restored window. No default: without it (or without windowY) the system places the window.",
-          "type": "integer"
-        },
-        "windowY": {
-          "description": "Vertical position of the restored window. No default: see windowX.",
-          "type": "integer"
-        },
-        "windowWidth": {
-          "description": "Width of the restored window, in points.",
-          "type": "integer",
-          "minimum": 200,
-          "default": 1100
-        },
-        "tabsWidthPercent": {
-          "description": "Share of the top row's width taken by the tabs panel (A); the properties panel (B) gets the rest. Position of the vertical divider.",
-          "type": "integer",
-          "minimum": 10,
-          "maximum": 90,
-          "default": 30
-        },
-        "topHeightPercent": {
-          "description": "Share of the height taken by the top row (A + B); the arrangement (C) gets the rest. Position of the horizontal divider.",
-          "type": "integer",
-          "minimum": 10,
-          "maximum": 90,
-          "default": 50
-        },
-        "windowHeight": {
-          "description": "Height of the restored window, in points.",
-          "type": "integer",
-          "minimum": 150,
-          "default": 720
-        }
-      }
+  "description": "Describes every entry of `settings` in gui-player.json (which lives next to the executable and is created with the defaults when missing). The file holds the current values as a list of {key, value}; this schema holds everything else about them. settingType USER entries are shown in Tools > Settings, built from controlType and values; SYSTEM entries are state the application keeps for itself (window, dividers). values.defaultValue is used when an entry is missing or invalid and by 'Restore default'; it may be absent for SYSTEM entries with no meaningful default. Also in the file, outside `settings`: `lastOpened`, the history of opened compositions (most recent first, absolute paths as {key, value}).",
+  "settings": {
+    "maxLastOpened": {
+      "settingType": "USER",
+      "settingTitle": "Recent files to remember",
+      "settingDescription": "Maximum number of files kept in File > Open recent.",
+      "dataType": "integer",
+      "controlType": "spinner",
+      "values": { "minValue": 1, "maxValue": 50, "defaultValue": 10 }
     },
-    "lastOpened": {
-      "description": "History of the compositions opened, most recent first. Both key and value are the file's absolute path.",
-      "type": "array",
-      "items": { "$ref": "#/$defs/keyValue" },
-      "default": []
-    }
-  },
-  "$defs": {
-    "keyValue": {
-      "type": "object",
-      "properties": {
-        "key": { "type": "string" },
-        "value": { "type": "string" }
-      },
-      "required": ["key", "value"],
-      "additionalProperties": false
+    "windowMaximized": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Window maximized",
+      "settingDescription": "Whether the window was left maximized. When false it opens restored, at windowX/windowY with windowWidth x windowHeight.",
+      "dataType": "boolean",
+      "values": { "defaultValue": true }
+    },
+    "windowX": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Window X",
+      "settingDescription": "Horizontal position of the restored window. Without it (or without windowY) the system places the window.",
+      "dataType": "integer",
+      "values": {}
+    },
+    "windowY": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Window Y",
+      "settingDescription": "Vertical position of the restored window. See windowX.",
+      "dataType": "integer",
+      "values": {}
+    },
+    "windowWidth": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Window width",
+      "settingDescription": "Width of the restored window, in points.",
+      "dataType": "integer",
+      "values": { "minValue": 200, "defaultValue": 1100 }
+    },
+    "windowHeight": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Window height",
+      "settingDescription": "Height of the restored window, in points.",
+      "dataType": "integer",
+      "values": { "minValue": 150, "defaultValue": 720 }
+    },
+    "tabsWidthPercent": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Tabs panel width",
+      "settingDescription": "Share of the width of A + B taken by the tabs panel (A). Position of the vertical divider; minValue and maxValue are how far it can be dragged.",
+      "dataType": "integer",
+      "values": { "minValue": 30, "maxValue": 50, "defaultValue": 30 }
+    },
+    "arrangementHeightPercent": {
+      "settingType": "SYSTEM",
+      "settingTitle": "Arrangement height",
+      "settingDescription": "Share of the height taken by the arrangement (C); A + B get the rest. Position of the horizontal divider; minValue and maxValue are how far it can be dragged.",
+      "dataType": "integer",
+      "values": { "minValue": 50, "maxValue": 75, "defaultValue": 50 }
     }
   }
 }

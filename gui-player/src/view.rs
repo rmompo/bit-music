@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use eframe::egui::Color32;
 
+use crate::config::DividerLimits;
 use crate::grid::PatternGrid;
 use crate::loader::Loaded;
 use crate::palette;
@@ -44,8 +45,11 @@ pub struct ViewState {
     pub volume: f32,
     /// Vertical divider: percentage of the top row's width taken by A.
     pub tabs_width_percent: f32,
-    /// Horizontal divider: percentage of the height taken by A + B.
-    pub top_height_percent: f32,
+    /// Horizontal divider: percentage of the height taken by C (the
+    /// arrangement); A + B get the rest.
+    pub arrangement_height_percent: f32,
+    /// How far each divider can be dragged (from the schema).
+    pub divider_limits: DividerLimits,
     /// One-shot request to scroll the arrangement horizontally to this
     /// offset (used to keep the playback cursor in view).
     pub scroll_to: Option<f32>,
@@ -66,7 +70,8 @@ impl ViewState {
             looping: false,
             volume: 1.0,
             tabs_width_percent: 30.0,
-            top_height_percent: 50.0,
+            arrangement_height_percent: 50.0,
+            divider_limits: DividerLimits::default(),
             scroll_to: None,
             grids: c
                 .patterns

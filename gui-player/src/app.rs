@@ -42,6 +42,8 @@ pub struct PlayerApp {
     dialog: Option<Dialog>,
     /// The user confirmed quitting, so the next close request goes through.
     quit_confirmed: bool,
+    /// The copy of the configuration being edited in Tools > Settings.
+    settings_draft: Option<Config>,
     /// Settings and history (`gui-player.json`).
     config: Config,
     /// Where the configuration is stored; `None` means memory only.
@@ -75,11 +77,15 @@ impl PlayerApp {
             last_title: String::new(),
             dialog: screenshot::initial_dialog(),
             quit_confirmed: false,
+            settings_draft: None,
             config,
             config_path,
             config_dirty_since: None,
             screenshot: ScreenshotJob::from_env(),
         };
+        if app.dialog == Some(Dialog::Settings) {
+            app.settings_draft = Some(app.config.clone());
+        }
         if let Some(path) = initial {
             app.open(ctx, path);
         }
@@ -105,8 +111,13 @@ impl PlayerApp {
                 opened = Some(path.clone());
                 let mut view = ViewState::new(&loaded);
                 let dividers = self.config.dividers();
-                view.tabs_width_percent = dividers.tabs_width_percent as f32;
-                view.top_height_percent = dividers.top_height_percent as f32;
+                // The stored positions are already within the schema's limits
+                // (`with_defaults`), but clamp anyway.
+                let (a_lo, a_hi) = view.divider_limits.tabs_width_range();
+                let (c_lo, c_hi) = view.divider_limits.arrangement_height_range();
+                view.tabs_width_percent = (dividers.tabs_width_percent as f32).clamp(a_lo, a_hi);
+                view.arrangement_height_percent =
+                    (dividers.arrangement_height_percent as f32).clamp(c_lo, c_hi);
                 if let Some((selection, tab)) = screenshot::initial_selection() {
                     view.selection = selection;
                     view.tab = tab;
@@ -157,7 +168,7 @@ impl PlayerApp {
         let State::Ready(r) = &self.state else { return };
         let now = DividerState {
             tabs_width_percent: r.view.tabs_width_percent.round() as i32,
-            top_height_percent: r.view.top_height_percent.round() as i32,
+            arrangement_height_percent: r.view.arrangement_height_percent.round() as i32,
         };
         if now != self.config.dividers() {
             self.config.set_dividers(&now);
@@ -316,7 +327,7 @@ impl eframe::App for PlayerApp {
                 // percentage (see `panels::top_row`).
                 let top = egui::Panel::top("info_panel")
                     .resizable(false)
-                    .exact_size(total * view.top_height_percent / 100.0)
+                    .exact_size(total * (100.0 - view.arrangement_height_percent) / 100.0)
                     .show(ui, |ui| panels::top_row(ui, loaded, view, transport));
                 let edge = top.response.rect;
                 let delta = panels::splitter(
@@ -327,8 +338,13 @@ impl eframe::App for PlayerApp {
                     panels::Axis::Horizontal,
                 );
                 if total > 0.0 {
-                    view.top_height_percent =
-                        panels::clamp_percent(view.top_height_percent + delta / total * 100.0, total);
+                    // Dragging down grows the top row, so C shrinks.
+                    let range = view.divider_limits.arrangement_height_range();
+                    view.arrangement_height_percent = panels::clamp_percent(
+                        view.arrangement_height_percent - delta / total * 100.0,
+                        total,
+                        range,
+                    );
                 }
                 arrangement::show(ui, loaded, view, transport.playhead(), transport.is_playing());
             }
@@ -336,10 +352,18 @@ impl eframe::App for PlayerApp {
 
         if actions.dialog.is_some() {
             self.dialog = actions.dialog;
+            if self.dialog == Some(Dialog::Settings) {
+                self.settings_draft = Some(self.config.clone());
+            }
         }
-        if dialogs::show(&ctx, &mut self.dialog) {
+        let outcome = dialogs::show(&ctx, &mut self.dialog, &mut self.settings_draft);
+        if outcome.quit {
             self.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if let Some(edited) = outcome.settings {
+            self.config.adopt_user_settings(&edited);
+            self.save_config();
         }
 
         if let Some(path) = actions.open_path.take() {
