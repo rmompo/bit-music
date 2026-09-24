@@ -183,35 +183,49 @@ jobs:
 ```bash
 #!/usr/bin/env bash
 # Packages the Windows build into dist/bit-music-<version>-windows-x86_64.zip:
-# both executables, the editable help file, the licenses, the README, and the
-# demo composition with its samples (kept in the same relative layout, since
-# a .bm1 finds its samples relative to itself).
+# both executables (bm.exe and bm-gui.exe), the editable help file, the
+# licenses, the README, and the demo composition with its samples (kept in
+# the same relative layout, since a .bm1 finds its samples relative to
+# itself).
 #
-# Usage: scripts/package-windows.sh [version-label]     (default label: dev)
+# Usage: scripts/package-windows.sh [--signed] [version-label]
+#        (default label: dev)
 #
-# Requires `zip`. Run scripts/build-windows.sh for bm and gui-player first.
+# By default the executables come from the release build (target/); with
+# --signed they come from dist/signed/, where scripts/sign-windows.sh puts the
+# signed copies. Only the package's own folder and zip are replaced: dist/signed
+# is left alone.
+#
+# Requires `zip`. Run scripts/build-windows.sh for bm and gui-player first (or
+# scripts/build-signed-windows.sh, for --signed).
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+BIN="target/x86_64-pc-windows-gnu/release"
+if [ "${1:-}" = "--signed" ]; then
+    BIN="dist/signed"
+    shift
+fi
+
 VERSION="${1:-dev}"
 VERSION="${VERSION//\//-}"   # a branch name like feature/x must not break the file name
-BIN="target/x86_64-pc-windows-gnu/release"
 NAME="bit-music-${VERSION}-windows-x86_64"
 STAGE="dist/${NAME}"
 
-for exe in bm.exe gui-player.exe; do
+for exe in bm.exe bm-gui.exe; do
     if [ ! -f "${BIN}/${exe}" ]; then
         echo "Error: ${BIN}/${exe} not found. Build it first:" >&2
         echo "  scripts/build-windows.sh bm && scripts/build-windows.sh gui-player" >&2
+        echo "  (or scripts/build-signed-windows.sh for --signed)" >&2
         exit 1
     fi
 done
 
-rm -rf dist
+rm -rf "${STAGE}" "${STAGE}.zip"
 mkdir -p "${STAGE}/demos/songs"
 
-cp "${BIN}/bm.exe" "${BIN}/gui-player.exe" "${STAGE}/"
+cp "${BIN}/bm.exe" "${BIN}/bm-gui.exe" "${STAGE}/"
 cp player/bm.hlp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md README.md "${STAGE}/"
 cp demos/songs/*.bm1 "${STAGE}/demos/songs/"
 cp -r demos/samples "${STAGE}/demos/samples"
@@ -320,7 +334,7 @@ or both in one step with `scripts/build-signed-windows.sh [package ...]`
 (default: `bm` and `gui-player`). Close a running copy of the program first:
 Windows does not let its file be replaced.
 
-It signs `bm.exe` and `gui-player.exe` (or the files given) with a timestamp
+It signs `bm.exe` and `bm-gui.exe` (or the files given) with a timestamp
 from a public server (so the signature outlives the certificate) and verifies
 them. The signed copies go to **`dist/signed/`**; the originals in `target/` are
 not touched. If several certificates exist, choose one with
@@ -367,7 +381,7 @@ and by `kangaroo (development)` (self-signed, so both match). From PowerShell:
 ```powershell
 Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\TrustedPublisher |
   Where-Object Subject -like "*kangaroo*"
-Get-AuthenticodeSignature .\dist\signed\gui-player.exe | Format-List   # Status: Valid
+Get-AuthenticodeSignature .\dist\signed\bm-gui.exe | Format-List   # Status: Valid
 ```
 
 Or with windows: right-click the signed `.exe` > *Properties* > *Digital
@@ -384,7 +398,7 @@ unsigned and stay blocked. A shortcut or a pinned taskbar entry that points at
 
 Sign again (`scripts/sign-windows.sh`) and run the new copy. In our test one
 signed `bm.exe` kept being rejected (also when copied elsewhere or renamed),
-while a fresh signing of the same program, and the signed `gui-player.exe`, ran
+while a fresh signing of the same program, and the signed `bm-gui.exe`, ran
 fine; the Code Integrity log shows Smart App Control consulting Defender's
 cloud service and a per-file cache, so a rejection seems to stick to that exact
 file. This is a hypothesis; the fix that worked is simply to sign again.

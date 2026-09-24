@@ -27,7 +27,7 @@ native executable (Windows and Linux). See [`player/specs/`](player/specs/) for
 implementation details.
 
 ### [`gui-player/`](gui-player/)
-Player with a graphical interface (egui/eframe, Windows and Linux). It opens a
+Player with a graphical interface (egui/eframe, Windows and Linux), built as the `bm-gui` executable. It opens a
 composition and shows its metadata, its samples (each can be auditioned) and patterns (with a step grid
 for each pattern) and the arrangement with per-track mute, and plays it with a
 transport ribbon and a cursor. Exporting to WAV from the interface is still to

@@ -22,8 +22,13 @@ RELEASE="target/x86_64-pc-windows-gnu/release"
 FILES=()
 for package in "${PACKAGES[@]}"; do
     scripts/build-windows.sh "${package}"
-    # Each package builds an executable with its own name.
-    FILES+=("${RELEASE}/${package}.exe")
+    # Each package builds an executable with its own name, except the GUI
+    # (package gui-player, executable bm-gui).
+    binary="${package}"
+    if [[ "${package}" == "gui-player" ]]; then
+        binary="bm-gui"
+    fi
+    FILES+=("${RELEASE}/${binary}.exe")
 done
 
 scripts/sign-windows.sh "${FILES[@]}"

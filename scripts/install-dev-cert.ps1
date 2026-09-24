@@ -42,4 +42,4 @@ foreach ($store in $stores) {
     Write-Host "Installed in $store"
 }
 Write-Host ""
-Write-Host "Check a signed file with:  Get-AuthenticodeSignature .\gui-player.exe | Format-List"
+Write-Host "Check a signed file with:  Get-AuthenticodeSignature .\bm-gui.exe | Format-List"

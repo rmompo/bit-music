@@ -4,7 +4,7 @@
 # originals in target/ are left untouched).
 #
 # Usage: scripts/sign-windows.sh [file.exe ...]
-#        (default: bm.exe and gui-player.exe from the release build)
+#        (default: bm.exe and bm-gui.exe from the release build)
 #
 # Needs osslsigncode:  sudo apt-get install -y osslsigncode
 #
@@ -52,7 +52,7 @@ fi
 if [[ $# -gt 0 ]]; then
     FILES=("$@")
 else
-    FILES=("${RELEASE}/bm.exe" "${RELEASE}/gui-player.exe")
+    FILES=("${RELEASE}/bm.exe" "${RELEASE}/bm-gui.exe")
 fi
 
 mkdir -p "${OUT}"

@@ -30,6 +30,13 @@ fi
 
 cargo build --release --target "${TARGET}" -p "${PACKAGE}"
 
-BIN="target/${TARGET}/release/${PACKAGE}.exe"
+# The executable has the package's name, except the GUI: package gui-player
+# builds bm-gui.
+BINARY="${PACKAGE}"
+if [ "${PACKAGE}" = "gui-player" ]; then
+    BINARY="bm-gui"
+fi
+
+BIN="target/${TARGET}/release/${BINARY}.exe"
 echo
 echo "Executable generated: ${BIN}"
