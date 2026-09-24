@@ -40,6 +40,8 @@ pub struct PlayerApp {
     last_title: String,
     /// The modal dialog currently open, if any.
     dialog: Option<Dialog>,
+    /// The user confirmed quitting, so the next close request goes through.
+    quit_confirmed: bool,
     /// Settings and history (`gui-player.json`).
     config: Config,
     /// Where the configuration is stored; `None` means memory only.
@@ -72,6 +74,7 @@ impl PlayerApp {
             state: State::Empty,
             last_title: String::new(),
             dialog: screenshot::initial_dialog(),
+            quit_confirmed: false,
             config,
             config_path,
             config_dirty_since: None,
@@ -259,6 +262,12 @@ impl eframe::App for PlayerApp {
         if let Some(job) = &mut self.screenshot {
             job.tick(&ctx);
         }
+        // The window's close button asks for the same confirmation as
+        // File > Quit.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.dialog = Some(Dialog::ConfirmQuit);
+        }
         self.track_dividers();
         self.track_window(&ctx);
 
@@ -329,6 +338,7 @@ impl eframe::App for PlayerApp {
             self.dialog = actions.dialog;
         }
         if dialogs::show(&ctx, &mut self.dialog) {
+            self.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 

@@ -17,7 +17,7 @@ mod libraries {
 }
 pub use libraries::{INTERNAL, THIRD_PARTY};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dialog {
     Libraries,
     Settings,
@@ -43,7 +43,9 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) -> bool {
     let Some(dialog) = *open else { return false };
     let mut close = false;
     let mut quit = false;
-    let modal = egui::Modal::new(egui::Id::new("app_dialog")).show(ctx, |ui| {
+    // One id per dialog: egui remembers a window's size by id, and sharing
+    // one would make a small dialog reopen as big as the largest one.
+    let modal = egui::Modal::new(egui::Id::new(("app_dialog", dialog))).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.heading(dialog.title());
         ui.separator();
