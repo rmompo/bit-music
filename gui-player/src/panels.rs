@@ -8,7 +8,7 @@ use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
 use crate::transport::Transport;
-use crate::widgets::{IconButton, ICON_BUTTON_SIZE};
+use crate::widgets::{paint_scope, scope_points, IconButton, ICON_BUTTON_SIZE};
 use crate::view::{ListTab, ViewState};
 
 pub const OK_COLOR: Color32 = Color32::from_rgb(90, 190, 110);
@@ -208,6 +208,7 @@ fn list_row(
     play_tip: &str,
     color: Color32,
     name: RichText,
+    scope: &[f32],
 ) -> RowOutcome {
     let (rect, row) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), LIST_ROW_HEIGHT),
@@ -222,6 +223,9 @@ fn list_row(
         Color32::TRANSPARENT
     };
     ui.painter().rect_filled(rect, 3.0, fill);
+    // While the element sounds: its live oscilloscope trace, across the whole
+    // row, behind the contents.
+    paint_scope(ui.painter(), rect, scope, color.gamma_multiply(0.55));
 
     // The contents are laid out inside the row, on top of it, so the play
     // button gets its own clicks.
@@ -252,7 +256,8 @@ fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
             name = name.color(ERR_COLOR);
         }
         let can_play = transport.can_preview_sample(&sample.id) && !transport.is_previewing_sample(&sample.id);
-        let row = list_row(ui, selected, can_play, "Play the sample", color, name);
+        let scope = transport.preview_scope_sample(&sample.id, scope_points(ui.available_width()));
+        let row = list_row(ui, selected, can_play, "Play the sample", color, name, &scope);
         if row.play {
             transport.preview_sample(&sample.id);
         }
@@ -268,7 +273,8 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
         let selected = view.selected_pattern.as_deref() == Some(pattern.id.as_str());
         let color = view.pattern_color(l, &pattern.id);
         let can_play = transport.can_preview_pattern(&pattern.id) && !transport.is_previewing_pattern(&pattern.id);
-        let row = list_row(ui, selected, can_play, "Play the pattern", color, RichText::new(&pattern.id));
+        let scope = transport.preview_scope_pattern(&pattern.id, scope_points(ui.available_width()));
+        let row = list_row(ui, selected, can_play, "Play the pattern", color, RichText::new(&pattern.id), &scope);
         if row.play {
             transport.preview_pattern(&pattern.id);
         }
@@ -506,7 +512,7 @@ mod tests {
                 ..Default::default()
             };
             let mut output = ctx.run_ui(raw, |ui| {
-                out = list_row(ui, false, true, "Play", Color32::RED, RichText::new("kick"));
+                out = list_row(ui, false, true, "Play", Color32::RED, RichText::new("kick"), &[]);
             });
             // egui insists that texture updates are handled or cleared.
             output.textures_delta.clear();

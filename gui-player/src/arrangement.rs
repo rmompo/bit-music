@@ -12,7 +12,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
-use crate::widgets::{IconButton, ICON_BUTTON_SIZE};
+use crate::widgets::{paint_scope, IconButton, ICON_BUTTON_SIZE};
 use crate::view::{Selection, ViewState};
 
 const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
@@ -20,7 +20,10 @@ const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
 /// view scrolls to follow it.
 const FOLLOW_MARGIN: f32 = 60.0;
 
-const LEFT_WIDTH: f32 = 176.0;
+/// Color of the live oscilloscope behind a track's name (translucent).
+const SCOPE_COLOR: Color32 = Color32::from_rgba_premultiplied(45, 90, 115, 115);
+/// Width of the pinned TRACK column, in points.
+pub const LEFT_WIDTH: f32 = 176.0;
 const RULER_HEIGHT: f32 = 24.0;
 const ROW_HEIGHT: f32 = 52.0;
 const BLOCK_INSET: f32 = 4.0;
@@ -28,7 +31,16 @@ const BLOCK_INSET: f32 = 4.0;
 /// Draws the arrangement. `playhead` is the playback position in seconds
 /// (`None` when there is nothing to play); while `playing`, the view scrolls
 /// horizontally to keep the cursor visible.
-pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Option<f64>, playing: bool) {
+/// `scopes` holds, per track, the live oscilloscope values drawn behind that
+/// track's name in the pinned column (empty when there is nothing to show).
+pub fn show(
+    ui: &mut egui::Ui,
+    l: &Loaded,
+    view: &mut ViewState,
+    playhead: Option<f64>,
+    playing: bool,
+    scopes: &[Vec<f32>],
+) {
     let timeline = &l.timeline;
     let spb = (l.project.composition.metadata.steps_per_beat as usize).max(1);
     let sw = view.step_width;
@@ -192,6 +204,10 @@ pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Optio
                 let y = rows_top + ti as f32 * ROW_HEIGHT;
                 let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, ROW_HEIGHT));
                 painter.rect_filled(cell, 0.0, visuals.panel_fill);
+                if let Some(scope) = scopes.get(ti) {
+                    // Faint, behind the button and the name.
+                    paint_scope(&painter, cell, scope, SCOPE_COLOR);
+                }
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
                 let button = Rect::from_min_size(
@@ -299,13 +315,14 @@ mod tests {
         let mut view = ViewState::new(&l);
         for zoom in [6.0, 16.0, 48.0] {
             view.step_width = zoom;
-            egui::__run_test_ui(|ui| show(ui, &l, &mut view, None, false));
+            egui::__run_test_ui(|ui| show(ui, &l, &mut view, None, false, &[]));
         }
         view.muted[0] = true;
         view.select(Selection::Pattern("kickA".into()));
         // with a playback cursor inside, at the end, and past the end
         for t in [0.0, 1.3, 2.5, 6.0] {
-            egui::__run_test_ui(|ui| show(ui, &l, &mut view, Some(t), true));
+            let scopes = vec![vec![0.0, 0.8, -0.8, 0.3]; l.timeline.tracks.len()];
+            egui::__run_test_ui(|ui| show(ui, &l, &mut view, Some(t), true, &scopes));
         }
     }
 }

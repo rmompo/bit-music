@@ -79,6 +79,12 @@ pub fn initial_selection() -> Option<(Selection, ListTab)> {
     parse_selection(&std::env::var("BM_GUI_SELECT").ok()?)
 }
 
+/// Preview to start when the composition opens, through `BM_GUI_PREVIEW`
+/// (`sample:<id>` or `pattern:<id>`).
+pub fn initial_preview() -> Option<Selection> {
+    parse_selection(&std::env::var("BM_GUI_PREVIEW").ok()?).map(|(selection, _)| selection)
+}
+
 /// Start position requested through `BM_GUI_PLAY_AT`.
 pub fn initial_play_at() -> Option<f64> {
     std::env::var("BM_GUI_PLAY_AT").ok()?.parse().ok()

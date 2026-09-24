@@ -12,7 +12,8 @@ use crate::loader::{self, file_name, LoadOutcome, Loaded};
 use crate::panels;
 use crate::screenshot::{self, ScreenshotJob};
 use crate::transport::{self, Transport};
-use crate::view::ViewState;
+use crate::view::{self, ViewState};
+use crate::widgets;
 use crate::arrangement;
 
 enum State {
@@ -123,6 +124,11 @@ impl PlayerApp {
                     view.tab = tab;
                 }
                 let transport = Transport::new(&loaded);
+                match screenshot::initial_preview() {
+                    Some(view::Selection::Sample(id)) => transport.preview_sample(&id),
+                    Some(view::Selection::Pattern(id)) => transport.preview_pattern(&id),
+                    _ => {}
+                }
                 if let Some(seconds) = screenshot::initial_play_at() {
                     transport.seek(seconds);
                     transport.play();
@@ -346,7 +352,15 @@ impl eframe::App for PlayerApp {
                         range,
                     );
                 }
-                arrangement::show(ui, loaded, view, transport.playhead(), transport.is_playing());
+                let scopes = transport.track_scopes(widgets::scope_points(arrangement::LEFT_WIDTH));
+                arrangement::show(
+                    ui,
+                    loaded,
+                    view,
+                    transport.playhead(),
+                    transport.is_playing(),
+                    &scopes,
+                );
             }
         });
 

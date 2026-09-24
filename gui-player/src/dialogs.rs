@@ -283,7 +283,7 @@ mod tests {
         }
         // Internal libraries carry their own version, not a shared one.
         let playback = INTERNAL.iter().find(|(n, _)| *n == "bm-playback").unwrap();
-        assert_eq!(playback.1, "0.3.0");
+        assert_eq!(playback.1, "0.4.0");
     }
 
     #[test]

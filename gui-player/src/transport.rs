@@ -182,6 +182,33 @@ impl Transport {
         }
     }
 
+    /// Oscilloscope values (`points` of them) for sample `id` while its
+    /// preview sounds; empty otherwise.
+    pub fn preview_scope_sample(&self, id: &str, points: usize) -> Vec<f32> {
+        self.preview_scope(&sample_key(id), points)
+    }
+
+    /// The same for pattern `id`.
+    pub fn preview_scope_pattern(&self, id: &str, points: usize) -> Vec<f32> {
+        self.preview_scope(&pattern_key(id), points)
+    }
+
+    /// One oscilloscope trace per track while the transport plays (empty for
+    /// a track that is muted, or when nothing plays).
+    pub fn track_scopes(&self, points: usize) -> Vec<Vec<f32>> {
+        match &self.engine {
+            Some(e) => (0..e.track_count()).map(|i| e.track_scope(i, points)).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    fn preview_scope(&self, key: &str, points: usize) -> Vec<f32> {
+        match (&self.engine, self.preview_ids.iter().position(|p| p == key)) {
+            (Some(e), Some(i)) => e.preview_scope(i, points),
+            _ => Vec::new(),
+        }
+    }
+
     fn can_preview(&self, key: &str) -> bool {
         self.engine.is_some() && self.preview_ids.iter().any(|p| p == key)
     }
