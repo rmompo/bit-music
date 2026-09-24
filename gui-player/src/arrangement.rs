@@ -26,8 +26,39 @@ const SCOPE_COLOR: Color32 = Color32::from_rgba_premultiplied(45, 90, 115, 115);
 /// Width of the pinned TRACK column, in points.
 pub const LEFT_WIDTH: f32 = 176.0;
 const RULER_HEIGHT: f32 = 24.0;
-const ROW_HEIGHT: f32 = 52.0;
+/// The smallest height of a track row, in points.
+const MIN_ROW_HEIGHT: f32 = 52.0;
+/// The tallest a track row may grow to.
+const MAX_ROW_HEIGHT: f32 = 240.0;
 const BLOCK_INSET: f32 = 4.0;
+/// Space above the notes of a block, for its label.
+const BLOCK_LABEL_HEIGHT: f32 = 15.0;
+/// Space kept under the notes of a block.
+const BLOCK_BOTTOM_PAD: f32 = 3.0;
+/// The height of one semitone in the small note preview of a block. Every
+/// mark has this height, whatever the pattern, so the row height of the
+/// tracks is set to fit the widest range of pitches used.
+const MARK_HEIGHT: f32 = 4.0;
+
+/// How tall the track rows are and how tall each note mark is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrackMetrics {
+    pub row_height: f32,
+    /// Height of one semitone (one note mark) in every block.
+    pub mark_height: f32,
+}
+
+/// Sizes the tracks so that every note mark has the same height in every
+/// pattern: the rows are made as tall as the widest range of pitches
+/// (`max_rows` semitones) needs at [`MARK_HEIGHT`] each. Only if that would
+/// pass the maximum are the marks made thinner, all of them the same.
+pub fn track_metrics(max_rows: usize) -> TrackMetrics {
+    let fixed = 2.0 * BLOCK_INSET + BLOCK_LABEL_HEIGHT + BLOCK_BOTTOM_PAD;
+    let rows = max_rows.max(1) as f32;
+    let row_height = (fixed + rows * MARK_HEIGHT).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
+    let mark_height = ((row_height - fixed) / rows).clamp(1.0, MARK_HEIGHT);
+    TrackMetrics { row_height, mark_height }
+}
 
 /// Draws the arrangement. `playhead` is the playback position in seconds
 /// (`None` when there is nothing to play); while `playing`, the view scrolls
@@ -45,9 +76,20 @@ pub fn show(
     let timeline = &l.timeline;
     let spb = (l.project.composition.metadata.steps_per_beat as usize).max(1);
     let sw = view.step_width;
+    // The widest range of pitches among the patterns on the tracks decides
+    // the height of every row.
+    let max_rows = timeline
+        .tracks
+        .iter()
+        .flat_map(|t| &t.clips)
+        .filter_map(|c| view.grids.get(&c.pattern_id))
+        .map(|g| g.chromatic.len())
+        .max()
+        .unwrap_or(0);
+    let TrackMetrics { row_height, mark_height } = track_metrics(max_rows);
     let content = Vec2::new(
         LEFT_WIDTH + timeline.total_steps as f32 * sw,
-        RULER_HEIGHT + timeline.tracks.len() as f32 * ROW_HEIGHT,
+        RULER_HEIGHT + timeline.tracks.len() as f32 * row_height,
     );
 
     let mut clicked: Option<String> = None;
@@ -77,15 +119,15 @@ pub fn show(
                 .min(timeline.total_steps);
             let x_of = |step: usize| origin.x + LEFT_WIDTH + step as f32 * sw;
             let rows_top = origin.y + RULER_HEIGHT;
-            let rows_bottom = rows_top + timeline.tracks.len() as f32 * ROW_HEIGHT;
+            let rows_bottom = rows_top + timeline.tracks.len() as f32 * row_height;
             let grid_right = origin.x + width;
 
             // 1. Row backgrounds.
             for i in 0..timeline.tracks.len() {
-                let y = rows_top + i as f32 * ROW_HEIGHT;
+                let y = rows_top + i as f32 * row_height;
                 let fill = if i % 2 == 0 { visuals.extreme_bg_color } else { visuals.faint_bg_color };
                 painter.rect_filled(
-                    Rect::from_min_max(Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, y + ROW_HEIGHT)),
+                    Rect::from_min_max(Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, y + row_height)),
                     0.0,
                     fill,
                 );
@@ -116,14 +158,14 @@ pub fn show(
 
             // 4. Row separators.
             for i in 0..=timeline.tracks.len() {
-                let y = rows_top + i as f32 * ROW_HEIGHT;
+                let y = rows_top + i as f32 * row_height;
                 painter.line_segment([Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, y)], strong_line);
             }
 
             // 5. Pattern blocks.
             for (ti, track) in timeline.tracks.iter().enumerate() {
                 let muted = view.muted[ti];
-                let y = rows_top + ti as f32 * ROW_HEIGHT;
+                let y = rows_top + ti as f32 * row_height;
                 for clip in &track.clips {
                     let clip_end = clip.start_step + clip.len_steps;
                     if clip_end < step_lo || clip.start_step > step_hi {
@@ -131,7 +173,7 @@ pub fn show(
                     }
                     let block = Rect::from_min_size(
                         Pos2::new(x_of(clip.start_step), y + BLOCK_INSET),
-                        Vec2::new(clip.len_steps as f32 * sw, ROW_HEIGHT - 2.0 * BLOCK_INSET),
+                        Vec2::new(clip.len_steps as f32 * sw, row_height - 2.0 * BLOCK_INSET),
                     );
                     let base = view.pattern_color(l, &clip.pattern_id);
                     let strength = match (muted, clip.is_repeat) {
@@ -144,15 +186,21 @@ pub fn show(
 
                     if let Some(g) = view.grids.get(&clip.pattern_id) {
                         let notes_area = Rect::from_min_max(
-                            Pos2::new(block.min.x + 3.0, block.min.y + 15.0),
-                            Pos2::new(block.max.x - 3.0, block.max.y - 3.0),
+                            Pos2::new(block.min.x + 3.0, block.min.y + BLOCK_LABEL_HEIGHT),
+                            Pos2::new(block.max.x - 3.0, block.max.y - BLOCK_BOTTOM_PAD),
                         );
                         let notes_color = if muted {
                             Color32::from_white_alpha(70)
                         } else {
                             Color32::from_white_alpha(235)
                         };
-                        grid::draw_mini_notes(&painter.with_clip_rect(block.intersect(painter.clip_rect())), notes_area, g, notes_color);
+                        grid::draw_mini_notes(
+                            &painter.with_clip_rect(block.intersect(painter.clip_rect())),
+                            notes_area,
+                            g,
+                            mark_height,
+                            notes_color,
+                        );
                     }
 
                     let label = if clip.is_repeat {
@@ -204,8 +252,8 @@ pub fn show(
             // 6. Pinned left column (x follows the horizontal scroll offset).
             let x_pin = origin.x + viewport.min.x;
             for (ti, track) in timeline.tracks.iter().enumerate() {
-                let y = rows_top + ti as f32 * ROW_HEIGHT;
-                let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, ROW_HEIGHT));
+                let y = rows_top + ti as f32 * row_height;
+                let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, row_height));
                 painter.rect_filled(cell, 0.0, visuals.panel_fill);
                 if let Some(scope) = scopes.get(ti) {
                     // Faint, behind the button and the name.
@@ -214,7 +262,7 @@ pub fn show(
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
                 let button = Rect::from_min_size(
-                    Pos2::new(cell.min.x + 8.0, y + (ROW_HEIGHT - ICON_BUTTON_SIZE) / 2.0),
+                    Pos2::new(cell.min.x + 8.0, y + (row_height - ICON_BUTTON_SIZE) / 2.0),
                     Vec2::splat(ICON_BUTTON_SIZE),
                 );
                 let muted = view.muted[ti];
@@ -230,7 +278,7 @@ pub fn show(
                 painter
                     .with_clip_rect(cell.shrink2(Vec2::new(0.0, 0.0)))
                     .text(
-                        Pos2::new(button.max.x + 8.0, y + ROW_HEIGHT / 2.0),
+                        Pos2::new(button.max.x + 8.0, y + row_height / 2.0),
                         Align2::LEFT_CENTER,
                         &track.id,
                         FontId::proportional(14.0),
@@ -327,5 +375,27 @@ mod tests {
             let scopes = vec![vec![0.0, 0.8, -0.8, 0.3]; l.timeline.tracks.len()];
             egui::__run_test_ui(|ui| show(ui, &l, &mut view, Some(t), true, &scopes));
         }
+    }
+
+    #[test]
+    fn the_tracks_are_as_tall_as_the_widest_range_needs_and_every_mark_is_alike() {
+        // No notes: the minimum height, marks at their normal height.
+        let none = track_metrics(0);
+        assert_eq!(none.row_height, MIN_ROW_HEIGHT);
+        assert_eq!(none.mark_height, MARK_HEIGHT);
+        // One octave: 26 points of frame and label + 12 semitones of 4 points.
+        let one = track_metrics(12);
+        assert_eq!(one.row_height, 74.0);
+        assert_eq!(one.mark_height, MARK_HEIGHT);
+        // Two octaves: taller rows, the same mark height.
+        let two = track_metrics(24);
+        assert_eq!(two.row_height, 122.0);
+        assert_eq!(two.mark_height, MARK_HEIGHT);
+        // A huge range hits the maximum row height: the marks get thinner,
+        // but they still all have the same height, and they fit.
+        let huge = track_metrics(120);
+        assert_eq!(huge.row_height, MAX_ROW_HEIGHT);
+        assert!(huge.mark_height < MARK_HEIGHT && huge.mark_height >= 1.0);
+        assert!(120.0 * huge.mark_height <= MAX_ROW_HEIGHT - 26.0 + 1e-3);
     }
 }

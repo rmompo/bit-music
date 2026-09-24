@@ -225,32 +225,37 @@ pub fn draw_pattern_grid(ui: &mut egui::Ui, grid: &PatternGrid, steps_per_beat: 
 /// `grid.chromatic_notes`.
 ///
 /// It uses the same full chromatic scale as the properties grid (every
-/// semitone of the octaves the pattern uses), so a note's height means the
-/// same in both places: the highest pitch at the top, the lowest at the bottom.
-pub fn mini_note_rects(rect: Rect, grid: &PatternGrid) -> Vec<Rect> {
+/// semitone of the octaves the pattern uses): the highest pitch on top, the
+/// lowest at the bottom. Every semitone is `mark_height` tall, whatever the
+/// pattern, so all the marks have the same height; the range is centered
+/// vertically in `rect`.
+pub fn mini_note_rects(rect: Rect, grid: &PatternGrid, mark_height: f32) -> Vec<Rect> {
     if grid.len_steps == 0 || grid.chromatic.is_empty() {
         return Vec::new();
     }
-    let rows = grid.chromatic.len() as f32;
     let step_w = rect.width() / grid.len_steps as f32;
-    let row_h = rect.height() / rows;
+    let range_height = grid.chromatic.len() as f32 * mark_height;
+    // Center the range; if it is taller than the room, start at the top.
+    let top = rect.min.y + ((rect.height() - range_height) / 2.0).max(0.0);
+    let mark = (mark_height - 1.0).max(1.0);
 
     grid.chromatic_notes
         .iter()
         .map(|note| {
             let min = Pos2::new(
                 rect.min.x + note.step as f32 * step_w,
-                rect.min.y + note.row as f32 * row_h,
+                top + note.row as f32 * mark_height,
             );
-            Rect::from_min_size(min, Vec2::new((step_w - 1.0).max(1.0), (row_h - 0.5).max(1.0)))
+            Rect::from_min_size(min, Vec2::new((step_w - 1.0).max(1.0), mark))
         })
         .collect()
 }
 
 /// Draws the small preview of the pattern inside `rect` (an arrangement
-/// block): one thin bar per sounding step, on the full chromatic scale.
-pub fn draw_mini_notes(painter: &egui::Painter, rect: Rect, grid: &PatternGrid, color: Color32) {
-    for note in mini_note_rects(rect, grid) {
+/// block): one thin bar per sounding step, on the full chromatic scale, all
+/// of the same height.
+pub fn draw_mini_notes(painter: &egui::Painter, rect: Rect, grid: &PatternGrid, mark_height: f32, color: Color32) {
+    for note in mini_note_rects(rect, grid, mark_height) {
         painter.rect_filled(note, 1.0, color);
     }
 }
@@ -338,12 +343,11 @@ mod tests {
     fn the_block_preview_uses_the_same_full_scale_as_the_grid() {
         let g = PatternGrid::from_steps(&steps(&[Some("C4"), Some("G4"), Some("F#4"), Some("C4")]));
         let area = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(120.0, 36.0));
-        let rects = mini_note_rects(area, &g);
+        let rects = mini_note_rects(area, &g, 3.0);
         assert_eq!(rects.len(), 4);
-        // 12 rows (the whole octave 4) share the height: 3 points each.
-        let row_h = 36.0 / 12.0;
+        // 12 rows of 3 points fill the 36 points of the area exactly.
         for (note, rect) in g.chromatic_notes.iter().zip(&rects) {
-            assert!((rect.min.y - (20.0 + note.row as f32 * row_h)).abs() < 1e-4);
+            assert!((rect.min.y - (20.0 + note.row as f32 * 3.0)).abs() < 1e-4);
             assert!(rect.min.y >= area.min.y && rect.max.y <= area.max.y + 1e-4);
         }
         // Pitch order: G4 above F#4 above C4; the two C4 at the same height.
@@ -352,6 +356,28 @@ mod tests {
         assert_eq!(y(0), y(3));
         // Steps go left to right.
         assert!(rects[0].min.x < rects[1].min.x && rects[1].min.x < rects[2].min.x);
+    }
+
+    #[test]
+    fn every_mark_has_the_same_height_whatever_the_range_of_the_pattern() {
+        // One octave (12 rows) and three (36 rows) in areas of different height.
+        let narrow = PatternGrid::from_steps(&steps(&[Some("C4"), Some("E4")]));
+        let wide = PatternGrid::from_steps(&steps(&[Some("C2"), Some("G4"), Some("B3")]));
+        assert_eq!(narrow.chromatic.len(), 12);
+        assert_eq!(wide.chromatic.len(), 36);
+        let heights: Vec<f32> = [
+            mini_note_rects(Rect::from_min_size(Pos2::ZERO, Vec2::new(80.0, 60.0)), &narrow, 3.0),
+            mini_note_rects(Rect::from_min_size(Pos2::ZERO, Vec2::new(80.0, 120.0)), &wide, 3.0),
+        ]
+        .concat()
+        .iter()
+        .map(|r| r.height())
+        .collect();
+        assert!(heights.iter().all(|h| (*h - heights[0]).abs() < 1e-6), "{heights:?}");
+        // A short range is centered in the room it has.
+        let centered = mini_note_rects(Rect::from_min_size(Pos2::ZERO, Vec2::new(80.0, 60.0)), &narrow, 3.0);
+        let bottom = centered.iter().map(|r| r.max.y).fold(0.0, f32::max);
+        assert!(bottom < 60.0);
     }
 
     #[test]
@@ -366,7 +392,7 @@ mod tests {
         egui::__run_test_ui(|ui| {
             draw_pattern_grid(ui, &g, 4, Color32::LIGHT_BLUE);
             let painter = ui.painter().clone();
-            draw_mini_notes(&painter, Rect::from_min_size(Pos2::ZERO, Vec2::new(80.0, 30.0)), &g, Color32::WHITE);
+            draw_mini_notes(&painter, Rect::from_min_size(Pos2::ZERO, Vec2::new(80.0, 30.0)), &g, 3.0, Color32::WHITE);
         });
     }
 }
