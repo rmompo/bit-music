@@ -159,6 +159,29 @@ impl Transport {
         self.preview(&pattern_key(id));
     }
 
+    /// Whether sample `id` is sounding as a preview right now.
+    pub fn is_previewing_sample(&self, id: &str) -> bool {
+        self.is_previewing(&sample_key(id))
+    }
+
+    /// Whether pattern `id` is sounding as a preview right now.
+    pub fn is_previewing_pattern(&self, id: &str) -> bool {
+        self.is_previewing(&pattern_key(id))
+    }
+
+    /// Whether any preview is sounding (the UI keeps repainting so its
+    /// play buttons come back when it ends).
+    pub fn any_preview_playing(&self) -> bool {
+        self.engine.as_ref().is_some_and(Engine::any_preview_playing)
+    }
+
+    fn is_previewing(&self, key: &str) -> bool {
+        match (&self.engine, self.preview_ids.iter().position(|p| p == key)) {
+            (Some(e), Some(i)) => e.is_preview_playing(i),
+            _ => false,
+        }
+    }
+
     fn can_preview(&self, key: &str) -> bool {
         self.engine.is_some() && self.preview_ids.iter().any(|p| p == key)
     }

@@ -75,7 +75,9 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<C
                 ui.label("Do you want to quit bit-music gui-player?");
             }
         }
-        ui.add_space(8.0);
+        // A horizontal line separates the content from the button bar.
+        ui.add_space(4.0);
+        ui.separator();
         // Action buttons always sit at the bottom right (right-to-left:
         // the first one added is the rightmost).
         match dialog {
@@ -281,7 +283,7 @@ mod tests {
         }
         // Internal libraries carry their own version, not a shared one.
         let playback = INTERNAL.iter().find(|(n, _)| *n == "bm-playback").unwrap();
-        assert_eq!(playback.1, "0.2.0");
+        assert_eq!(playback.1, "0.3.0");
     }
 
     #[test]

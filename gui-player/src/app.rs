@@ -288,7 +288,7 @@ impl eframe::App for PlayerApp {
                 r.transport.toggle_play();
             }
             r.transport.sync(&r.view);
-            if r.transport.is_playing() {
+            if r.transport.is_playing() || r.transport.any_preview_playing() {
                 ctx.request_repaint();
             }
         }

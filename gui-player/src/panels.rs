@@ -94,7 +94,7 @@ pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
         view.tabs_width_percent = clamp_percent(view.tabs_width_percent + delta / total * 100.0, total, range);
     }
     egui::CentralPanel::default().show(ui, |ui| {
-        scroll(ui, "properties_scroll", |ui| properties(ui, l, view));
+        properties(ui, l, view);
     });
 }
 
@@ -192,7 +192,10 @@ fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
         let color = view.sample_colors.get(&sample.id).copied().unwrap_or(Color32::GRAY);
         ui.horizontal(|ui| {
             let play = ui
-                .add_enabled(transport.can_preview_sample(&sample.id), IconButton::new(regular::PLAY))
+                .add_enabled(
+                    transport.can_preview_sample(&sample.id) && !transport.is_previewing_sample(&sample.id),
+                    IconButton::new(regular::PLAY),
+                )
                 .on_hover_text("Play the sample");
             if play.clicked() {
                 transport.preview_sample(&sample.id);
@@ -215,7 +218,10 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
         let color = view.pattern_color(l, &pattern.id);
         ui.horizontal(|ui| {
             let play = ui
-                .add_enabled(transport.can_preview_pattern(&pattern.id), IconButton::new(regular::PLAY))
+                .add_enabled(
+                    transport.can_preview_pattern(&pattern.id) && !transport.is_previewing_pattern(&pattern.id),
+                    IconButton::new(regular::PLAY),
+                )
                 .on_hover_text("Play the pattern");
             if play.clicked() {
                 transport.preview_pattern(&pattern.id);
@@ -228,71 +234,115 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
     }
 }
 
-/// Area C: the detail of the selected sample or pattern.
+/// Area B: Properties. With the Metadata tab open it shows the metadata's
+/// `others`; otherwise the detail of the selected sample or pattern, in two
+/// equal columns: on the left all the properties (first what is stored in the
+/// `.bm1`, then what is calculated); on the right only where it is used and,
+/// for a pattern, its steps.
 pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
     ui.heading("Properties");
     if view.tab == ListTab::Metadata {
-        others_properties(ui, l);
+        scroll(ui, "metadata_properties", |ui| others_properties(ui, l));
         return;
     }
     match &view.selection {
         Selection::None => {
             ui.label(RichText::new("Select a sample or a pattern to see its properties.").weak());
         }
-        Selection::Sample(id) => sample_properties(ui, l, id),
-        Selection::Pattern(id) => pattern_properties(ui, l, view, id),
+        Selection::Sample(id) => two_columns(
+            ui,
+            "sample",
+            |ui| sample_properties(ui, l, id),
+            |ui| sample_used(ui, l, id),
+        ),
+        Selection::Pattern(id) => two_columns(
+            ui,
+            "pattern",
+            |ui| pattern_properties(ui, l, view, id),
+            |ui| pattern_used_and_steps(ui, l, view, id),
+        ),
     }
 }
 
-fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
-    let c = &l.project.composition;
-    let Some((sample, report)) = c
+/// Two equal columns (a fixed 50% / 50%), each with its own vertical scroll.
+fn two_columns(
+    ui: &mut egui::Ui,
+    id: &str,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    ui.columns(2, |cols| {
+        scroll(&mut cols[0], &format!("{id}_stored_scroll"), left);
+        scroll(&mut cols[1], &format!("{id}_calculated_scroll"), right);
+    });
+}
+
+fn find_sample<'a>(
+    l: &'a Loaded,
+    id: &str,
+) -> Option<(&'a bm_format::model::Sample, &'a bm_project::SampleReport)> {
+    l.project
+        .composition
         .samples
         .iter()
         .zip(&l.sample_reports)
         .find(|(s, _)| s.id == id)
-    else {
-        return;
-    };
+}
 
-    egui::Grid::new("sample_properties")
+/// A sample's properties (left column): first what is stored in the
+/// composition, then what is read from its audio.
+fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
+    let Some((sample, report)) = find_sample(l, id) else { return };
+    egui::Grid::new("sample_stored")
         .num_columns(2)
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
             row(ui, "Sample", sample.id.clone());
+            row(
+                ui,
+                "Root note",
+                fmt::root_label(sample.root_note.as_deref(), sample.root_octave),
+            );
+        });
+
+    // The path can be long, so it goes outside the tables and wraps. It is
+    // what is stored in the composition, not the resolved path.
+    ui.add_space(6.0);
+    ui.label(RichText::new("File").weak());
+    let stored = l.project.declared_files.get(&sample.id).unwrap_or(&sample.file);
+    ui.add(egui::Label::new(stored.as_str()).wrap());
+
+    ui.add_space(8.0);
+    egui::Grid::new("sample_calculated")
+        .num_columns(2)
+        .min_col_width(MIN_KEY_WIDTH)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
             ui.label(RichText::new("Status").weak());
             match &report.outcome {
                 Ok(()) => ui.label(RichText::new("ok").color(OK_COLOR)),
                 Err(err) => ui.label(RichText::new(err.to_string()).color(ERR_COLOR)),
             };
             ui.end_row();
-            row(
-                ui,
-                "Root note",
-                fmt::root_label(sample.root_note.as_deref(), sample.root_octave),
-            );
             if let Some(audio) = l.session.as_ref().and_then(|s| s.samples.get(&sample.id)) {
                 row(ui, "Length", format!("{:.2} s", audio.duration_seconds()));
                 row(ui, "Frames", audio.data.len().to_string());
                 row(ui, "Sample rate", format!("{} Hz", audio.sample_rate));
             }
         });
+}
 
-    // The path can be long, so it goes outside the table and wraps.
-    ui.add_space(6.0);
-    ui.label(RichText::new("File").weak());
-    // What is stored in the composition, not the resolved path.
-    let stored = l.project.declared_files.get(&sample.id).unwrap_or(&sample.file);
-    ui.add(egui::Label::new(stored.as_str()).wrap());
-
-    let users: Vec<&str> = c
+/// Right column of a sample: only where it is used.
+fn sample_used(ui: &mut egui::Ui, l: &Loaded, id: &str) {
+    let users: Vec<&str> = l
+        .project
+        .composition
         .patterns
         .iter()
         .filter(|p| p.sample == id)
         .map(|p| p.id.as_str())
         .collect();
-    ui.add_space(8.0);
     ui.label(RichText::new("Used by patterns").strong());
     if users.is_empty() {
         ui.label(RichText::new("none").weak());
@@ -301,6 +351,8 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
     }
 }
 
+/// A pattern's properties (left column): first what is stored in the
+/// composition (its steps aside), then what is worked out from them.
 fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str) {
     let c = &l.project.composition;
     let Some(pattern) = c.patterns.iter().find(|p| p.id == id) else {
@@ -308,9 +360,7 @@ fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str)
     };
     let spb = (c.metadata.steps_per_beat as usize).max(1);
     let color = view.pattern_color(l, id);
-    let grid_model = view.grids.get(id);
-
-    egui::Grid::new("pattern_properties")
+    egui::Grid::new("pattern_stored")
         .num_columns(2)
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
@@ -322,26 +372,30 @@ fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str)
                 ui.label(&pattern.sample);
             });
             ui.end_row();
+        });
+
+    ui.add_space(8.0);
+    egui::Grid::new("pattern_calculated")
+        .num_columns(2)
+        .min_col_width(MIN_KEY_WIDTH)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
             row(ui, "Steps", pattern.steps.len().to_string());
             row(ui, "Beats", format!("{:.2}", pattern.steps.len() as f32 / spb as f32));
-            if let Some(g) = grid_model {
+            if let Some(g) = view.grids.get(id) {
                 row(ui, "Sounding steps", g.notes.len().to_string());
                 row(ui, "Distinct pitches", g.rows.len().to_string());
             }
         });
+}
 
-    ui.add_space(8.0);
-    ui.label(RichText::new("Steps").strong());
-    if let Some(g) = grid_model {
-        if g.rows.is_empty() {
-            ui.label(RichText::new("silent pattern (no notes)").weak());
-        } else {
-            egui::ScrollArea::horizontal()
-                .id_salt("pattern_grid_scroll")
-                .show(ui, |ui| grid::draw_pattern_grid(ui, g, spb, color));
-        }
-    }
-    ui.add_space(8.0);
+/// Right column of a pattern: where it is used, then its step grid (which
+/// scrolls horizontally on its own).
+fn pattern_used_and_steps(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str) {
+    let c = &l.project.composition;
+    let spb = (c.metadata.steps_per_beat as usize).max(1);
+    let color = view.pattern_color(l, id);
+
     ui.label(RichText::new("Used in tracks").strong());
     let mut used = false;
     for track in &l.timeline.tracks {
@@ -362,6 +416,17 @@ fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str)
         ui.label(RichText::new("not used").weak());
     }
 
+    ui.add_space(8.0);
+    ui.label(RichText::new("Steps").strong());
+    if let Some(g) = view.grids.get(id) {
+        if g.rows.is_empty() {
+            ui.label(RichText::new("silent pattern (no notes)").weak());
+        } else {
+            egui::ScrollArea::horizontal()
+                .id_salt("pattern_grid_scroll")
+                .show(ui, |ui| grid::draw_pattern_grid(ui, g, spb, color));
+        }
+    }
 }
 
 #[cfg(test)]
