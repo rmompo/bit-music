@@ -5,6 +5,7 @@
 //! staged — structure first, then the sample check, then (only if every
 //! sample is usable) decoding and rendering the audio.
 
+use crate::i18n::t;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
@@ -24,7 +25,7 @@ pub struct Loaded {
     /// Decoded and rendered audio. `None` when some sample can't be used
     /// (see `session_error`).
     pub session: Option<Session>,
-    pub session_error: Option<String>,
+    pub session_error: Option<SessionIssue>,
 }
 
 impl Loaded {
@@ -45,6 +46,30 @@ impl Loaded {
     /// is known even without audio).
     pub fn duration_seconds(&self) -> f64 {
         self.timeline.total_steps as f64 * self.seconds_per_step
+    }
+}
+
+/// Why there is no audio to play. Kept as data, not text, because it is
+/// produced on the loading thread and shown in whatever language the
+/// interface has when it is displayed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionIssue {
+    /// Some samples are missing or invalid.
+    SamplesUnusable,
+    /// There is nothing to play.
+    NoAudio,
+    /// A message from a library (in English).
+    Other(String),
+}
+
+impl SessionIssue {
+    /// The message in the current language.
+    pub fn text(&self) -> String {
+        match self {
+            SessionIssue::SamplesUnusable => t("error.samples_unusable").to_string(),
+            SessionIssue::NoAudio => t("error.no_audio").to_string(),
+            SessionIssue::Other(message) => message.clone(),
+        }
     }
 }
 
@@ -79,10 +104,10 @@ pub fn load_blocking(path: &Path) -> LoadOutcome {
     let (session, session_error) = if sample_reports.iter().all(|r| r.outcome.is_ok()) {
         match bm_session::open(path) {
             Ok(s) => (Some(s), None),
-            Err(err) => (None, Some(err.to_string())),
+            Err(err) => (None, Some(SessionIssue::Other(err.to_string()))),
         }
     } else {
-        (None, Some("some samples are missing or invalid".to_string()))
+        (None, Some(SessionIssue::SamplesUnusable))
     };
 
     LoadOutcome::Loaded(Box::new(Loaded {

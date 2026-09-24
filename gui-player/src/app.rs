@@ -1,12 +1,13 @@
 //! Application state and the main UI loop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
 
 use crate::config::{Config, DividerState};
 use crate::dialogs::{self, Dialog};
+use crate::i18n::{self, t, tf};
 use crate::chrome::{self, StatusLine, StatusSliders};
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
 use crate::panels;
@@ -43,6 +44,8 @@ pub struct PlayerApp {
     dialog: Option<Dialog>,
     /// The user confirmed quitting, so the next close request goes through.
     quit_confirmed: bool,
+    /// The text of the open [`Dialog::Notice`].
+    notice: String,
     /// The copy of the configuration being edited in Tools > Settings.
     settings_draft: Option<Config>,
     /// Settings and history (`gui-player.json`).
@@ -73,11 +76,13 @@ impl PlayerApp {
             }
             None => Config::default().with_defaults(),
         };
+        i18n::set_language(config.language());
         let mut app = Self {
             state: State::Empty,
             last_title: String::new(),
             dialog: screenshot::initial_dialog(),
             quit_confirmed: false,
+            notice: String::new(),
             settings_draft: None,
             config,
             config_path,
@@ -143,13 +148,33 @@ impl PlayerApp {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => State::Failed {
                 path: path.clone(),
-                message: "loading stopped unexpectedly (internal error)".to_string(),
+                message: t("error.loader_stopped").to_string(),
             },
         };
         self.state = next;
         if let Some(path) = opened {
             self.remember(&path);
         }
+    }
+
+    /// Tools > Export > WAV: asks where to save and writes the composition's
+    /// full mix, then reports the result in a dialog.
+    fn export_wav(&mut self) {
+        let State::Ready(ready) = &self.state else { return };
+        let Some(session) = &ready.loaded.session else { return };
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(t("export.title"))
+            .add_filter(t("export.filter"), &["wav"])
+            .set_file_name(export_file_name(&ready.loaded.project.path));
+        if let Some(dir) = dialog_dir(&self.config) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else { return };
+        self.notice = match write_export(session, &path) {
+            Ok(()) => tf("export.done", &[("path", &path.display().to_string())]),
+            Err(err) => tf("export.failed", &[("error", &err.to_string())]),
+        };
+        self.dialog = Some(Dialog::Notice);
     }
 
     /// Adds a successfully opened composition to the history and saves it.
@@ -261,16 +286,41 @@ fn dropped_path(ctx: &egui::Context) -> Option<PathBuf> {
     ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()))
 }
 
-fn pick_file() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title("Open a bit-music composition")
-        .add_filter("bit-music composition", &["bm1"])
-        .pick_file()
+/// The folder file dialogs start in: the `path` setting, when it names a
+/// folder that exists.
+fn dialog_dir(config: &Config) -> Option<PathBuf> {
+    config.files_path().map(PathBuf::from).filter(|p| p.is_dir())
+}
+
+fn pick_file(config: &Config) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title(t("file.open_title"))
+        .add_filter(t("file.open_filter"), &["bm1"]);
+    if let Some(dir) = dialog_dir(config) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_file()
+}
+
+/// The file name a composition's export starts with: its own name with a
+/// `.wav` extension.
+fn export_file_name(composition: &Path) -> String {
+    let stem = composition
+        .file_stem()
+        .map_or_else(|| "export".to_string(), |s| s.to_string_lossy().into_owned());
+    format!("{stem}.wav")
+}
+
+/// Renders nothing new: writes the composition's full mix (the same audio
+/// `bm export --wav` writes) to `path`.
+fn write_export(session: &bm_session::Session, path: &Path) -> Result<(), bm_wav::WavError> {
+    bm_wav::write_wav(path, &session.master, bm_render::OUTPUT_SAMPLE_RATE)
 }
 
 impl eframe::App for PlayerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        i18n::set_language(screenshot::language_override().unwrap_or_else(|| self.config.language()));
 
         if let Some(path) = dropped_path(&ctx) {
             self.open(&ctx, path);
@@ -301,7 +351,9 @@ impl eframe::App for PlayerApp {
 
         let mut actions = chrome::MenuActions::default();
         let recent: Vec<&str> = self.config.last_opened.iter().map(|e| e.value.as_str()).collect();
-        egui::Panel::top("menu_bar").show(ui, |ui| actions = chrome::menu_bar(ui, &recent));
+        let can_export = matches!(&self.state, State::Ready(r) if r.loaded.session.is_some());
+        egui::Panel::top("menu_bar")
+            .show(ui, |ui| actions = chrome::menu_bar(ui, &recent, can_export));
 
         // Bottom ribbons: the status bar is the lowest, the transport sits
         // right above it, directly under the arrangement.
@@ -370,7 +422,7 @@ impl eframe::App for PlayerApp {
                 self.settings_draft = Some(self.config.clone());
             }
         }
-        let outcome = dialogs::show(&ctx, &mut self.dialog, &mut self.settings_draft);
+        let outcome = dialogs::show(&ctx, &mut self.dialog, &mut self.settings_draft, &self.notice);
         if outcome.quit {
             self.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -384,9 +436,12 @@ impl eframe::App for PlayerApp {
             self.open(&ctx, path);
         }
         if actions.open {
-            if let Some(path) = pick_file() {
+            if let Some(path) = pick_file(&self.config) {
                 self.open(&ctx, path);
             }
+        }
+        if actions.export_wav {
+            self.export_wav();
         }
         if actions.quit {
             self.dialog = Some(Dialog::ConfirmQuit);
@@ -459,5 +514,47 @@ mod tests {
         assert!(matches!(app.state, State::Failed { .. }));
         assert_eq!(app.window_title(), "bit-music gui-player");
         assert!(app.config.last_opened.is_empty());
+    }
+
+    #[test]
+    fn the_export_writes_the_full_mix_that_bm_export_writes() {
+        let mut app = PlayerApp::new(&egui::Context::default(), Some(demo()), None);
+        wait_until_loaded(&mut app);
+        let State::Ready(ready) = &app.state else { panic!("the demo should be open") };
+        let session = ready.loaded.session.as_ref().expect("the demo has audio");
+
+        let dir = std::env::temp_dir().join(format!("gui-player-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(export_file_name(&ready.loaded.project.path));
+        assert_eq!(path.file_name().unwrap(), "song1.wav");
+
+        write_export(session, &path).unwrap();
+        let back = bm_wav::load_wav(&path).unwrap();
+        assert_eq!(back.sample_rate, bm_render::OUTPUT_SAMPLE_RATE);
+        assert_eq!(back.data.len(), session.master.len());
+        assert!(back.data.iter().any(|v| *v != 0.0));
+    }
+
+    #[test]
+    fn dialogs_start_in_the_configured_folder_only_if_it_exists() {
+        let mut config = Config::default().with_defaults();
+        // The default is a Windows path of the author's machine: absent here.
+        if !Path::new(&config.files_path().unwrap()).is_dir() {
+            assert_eq!(dialog_dir(&config), None);
+        }
+        config.set(crate::config::PATH, serde_json::Value::from(std::env::temp_dir().to_string_lossy().to_string()));
+        assert_eq!(dialog_dir(&config), Some(std::env::temp_dir()));
+        config.set(crate::config::PATH, serde_json::Value::from("  "));
+        assert_eq!(dialog_dir(&config), None);
+    }
+
+    #[test]
+    fn the_language_setting_changes_the_interface_language() {
+        let mut app = PlayerApp::new(&egui::Context::default(), None, None);
+        assert_eq!(i18n::language(), i18n::Lang::English);
+        app.config.set(crate::config::LANG, serde_json::Value::from("SPANISH"));
+        i18n::set_language(app.config.language());
+        assert_eq!(t("menu.file"), "Archivo");
+        i18n::set_language(i18n::Lang::English);
     }
 }

@@ -12,11 +12,18 @@ const ICON_SIZE: f32 = 16.0;
 pub struct IconButton<'a> {
     icon: &'a str,
     selected: bool,
+    side: f32,
 }
 
 impl<'a> IconButton<'a> {
     pub fn new(icon: &'a str) -> Self {
-        Self { icon, selected: false }
+        Self { icon, selected: false, side: ICON_BUTTON_SIZE }
+    }
+
+    /// A different side, in points (the icon scales with it).
+    pub fn size(mut self, side: f32) -> Self {
+        self.side = side;
+        self
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
@@ -28,8 +35,8 @@ impl<'a> IconButton<'a> {
 impl Widget for IconButton<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         ui.add(
-            Button::new(RichText::new(self.icon).size(ICON_SIZE))
-                .min_size(Vec2::splat(ICON_BUTTON_SIZE))
+            Button::new(RichText::new(self.icon).size(ICON_SIZE * self.side / ICON_BUTTON_SIZE))
+                .min_size(Vec2::splat(self.side))
                 .selected(self.selected),
         )
     }
@@ -91,6 +98,10 @@ mod tests {
             assert_eq!(r.rect.width(), ICON_BUTTON_SIZE);
             let r = ui.add(IconButton::new(egui_phosphor::regular::STOP).selected(true));
             assert_eq!(r.rect.width(), r.rect.height());
+            // A smaller one keeps being square.
+            let r = ui.add(IconButton::new(egui_phosphor::regular::STOP).size(18.0));
+            assert_eq!(r.rect.width(), 18.0);
+            assert_eq!(r.rect.height(), 18.0);
         });
     }
 }

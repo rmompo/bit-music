@@ -5,6 +5,7 @@ use eframe::egui::{self, Color32, RichText, Sense, Vec2};
 use egui_phosphor::regular;
 
 use crate::fmt;
+use crate::i18n::{t, tf};
 use crate::grid;
 use crate::loader::Loaded;
 use crate::transport::Transport;
@@ -124,18 +125,20 @@ pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            row(ui, "Title", m.title.clone());
-            row(ui, "Format version", m.version.clone());
-            row(ui, "BPM", m.bpm.to_string());
-            row(ui, "Steps per beat", m.steps_per_beat.to_string());
-            row(ui, "Seconds per step", format!("{:.3}", l.seconds_per_step));
+            row(ui, t("meta.title"), m.title.clone());
+            row(ui, t("meta.format_version"), m.version.clone());
+            row(ui, t("meta.bpm"), m.bpm.to_string());
+            row(ui, t("meta.steps_per_beat"), m.steps_per_beat.to_string());
+            row(ui, t("meta.seconds_per_step"), format!("{:.3}", l.seconds_per_step));
             row(
                 ui,
-                "Length",
-                format!(
-                    "{} steps · {}",
-                    l.timeline.total_steps,
-                    fmt::duration_mmss(l.duration_seconds())
+                t("meta.length"),
+                tf(
+                    "meta.length_value",
+                    &[
+                        ("steps", &l.timeline.total_steps.to_string()),
+                        ("duration", &fmt::duration_mmss(l.duration_seconds())),
+                    ],
                 ),
             );
         });
@@ -145,10 +148,10 @@ pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
 fn others_properties(ui: &mut egui::Ui, l: &Loaded) {
     let others = &l.project.composition.metadata.others;
     if others.is_empty() {
-        ui.label(RichText::new("This composition has no other metadata.").weak());
+        ui.label(RichText::new(t("meta.no_others")).weak());
         return;
     }
-    ui.label(RichText::new("Others").strong());
+    ui.label(RichText::new(t("meta.others")).strong());
     egui::Grid::new("others_grid")
         .num_columns(2)
         .min_col_width(MIN_KEY_WIDTH)
@@ -165,16 +168,16 @@ fn others_properties(ui: &mut egui::Ui, l: &Loaded) {
 pub fn lists(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
     let c = &l.project.composition;
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut view.tab, ListTab::Metadata, "Metadata");
+        ui.selectable_value(&mut view.tab, ListTab::Metadata, t("tab.metadata"));
         ui.selectable_value(
             &mut view.tab,
             ListTab::Samples,
-            format!("Samples ({})", c.samples.len()),
+            tf("tab.samples", &[("count", &c.samples.len().to_string())]),
         );
         ui.selectable_value(
             &mut view.tab,
             ListTab::Patterns,
-            format!("Patterns ({})", c.patterns.len()),
+            tf("tab.patterns", &[("count", &c.patterns.len().to_string())]),
         );
     });
     ui.separator();
@@ -257,7 +260,7 @@ fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
         }
         let can_play = transport.can_preview_sample(&sample.id) && !transport.is_previewing_sample(&sample.id);
         let scope = transport.preview_scope_sample(&sample.id, scope_points(ui.available_width()));
-        let row = list_row(ui, selected, can_play, "Play the sample", color, name, &scope);
+        let row = list_row(ui, selected, can_play, t("list.play_sample"), color, name, &scope);
         if row.play {
             transport.preview_sample(&sample.id);
         }
@@ -274,7 +277,7 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
         let color = view.pattern_color(l, &pattern.id);
         let can_play = transport.can_preview_pattern(&pattern.id) && !transport.is_previewing_pattern(&pattern.id);
         let scope = transport.preview_scope_pattern(&pattern.id, scope_points(ui.available_width()));
-        let row = list_row(ui, selected, can_play, "Play the pattern", color, RichText::new(&pattern.id), &scope);
+        let row = list_row(ui, selected, can_play, t("list.play_pattern"), color, RichText::new(&pattern.id), &scope);
         if row.play {
             transport.preview_pattern(&pattern.id);
         }
@@ -290,7 +293,7 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
 /// `.bm1`, then what is calculated); on the right only where it is used and,
 /// for a pattern, its steps.
 pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
-    ui.heading("Properties");
+    ui.heading(t("props.heading"));
     // Each tab shows the properties of its own selection.
     match view.tab {
         ListTab::Metadata => scroll(ui, "metadata_properties", |ui| others_properties(ui, l)),
@@ -316,7 +319,7 @@ pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
 }
 
 fn no_selection(ui: &mut egui::Ui) {
-    ui.label(RichText::new("Select an element to see its properties.").weak());
+    ui.label(RichText::new(t("props.no_selection")).weak());
 }
 
 /// Two equal columns (a fixed 50% / 50%), each with its own vertical scroll.
@@ -353,10 +356,10 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            row(ui, "Sample", sample.id.clone());
+            row(ui, t("prop.sample"), sample.id.clone());
             row(
                 ui,
-                "Root note",
+                t("prop.root_note"),
                 fmt::root_label(sample.root_note.as_deref(), sample.root_octave),
             );
         });
@@ -364,7 +367,7 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
     // The path can be long, so it goes outside the tables and wraps. It is
     // what is stored in the composition, not the resolved path.
     ui.add_space(6.0);
-    ui.label(RichText::new("File").weak());
+    ui.label(RichText::new(t("prop.file")).weak());
     let stored = l.project.declared_files.get(&sample.id).unwrap_or(&sample.file);
     ui.add(egui::Label::new(stored.as_str()).wrap());
 
@@ -374,16 +377,16 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            ui.label(RichText::new("Status").weak());
+            ui.label(RichText::new(t("prop.status")).weak());
             match &report.outcome {
-                Ok(()) => ui.label(RichText::new("ok").color(OK_COLOR)),
+                Ok(()) => ui.label(RichText::new(t("prop.ok")).color(OK_COLOR)),
                 Err(err) => ui.label(RichText::new(err.to_string()).color(ERR_COLOR)),
             };
             ui.end_row();
             if let Some(audio) = l.session.as_ref().and_then(|s| s.samples.get(&sample.id)) {
-                row(ui, "Length", format!("{:.2} s", audio.duration_seconds()));
-                row(ui, "Frames", audio.data.len().to_string());
-                row(ui, "Sample rate", format!("{} Hz", audio.sample_rate));
+                row(ui, t("prop.length"), format!("{:.2} s", audio.duration_seconds()));
+                row(ui, t("prop.frames"), audio.data.len().to_string());
+                row(ui, t("prop.sample_rate"), format!("{} Hz", audio.sample_rate));
             }
         });
 }
@@ -398,9 +401,9 @@ fn sample_used(ui: &mut egui::Ui, l: &Loaded, id: &str) {
         .filter(|p| p.sample == id)
         .map(|p| p.id.as_str())
         .collect();
-    ui.label(RichText::new("Used by patterns").strong());
+    ui.label(RichText::new(t("prop.used_by_patterns")).strong());
     if users.is_empty() {
-        ui.label(RichText::new("none").weak());
+        ui.label(RichText::new(t("prop.none")).weak());
     } else {
         ui.label(users.join(", "));
     }
@@ -420,8 +423,8 @@ fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str)
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            row(ui, "Pattern", pattern.id.clone());
-            ui.label(RichText::new("Sample").weak());
+            row(ui, t("prop.pattern"), pattern.id.clone());
+            ui.label(RichText::new(t("prop.sample")).weak());
             ui.horizontal(|ui| {
                 chip(ui, color);
                 ui.label(&pattern.sample);
@@ -435,11 +438,11 @@ fn pattern_properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &str)
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            row(ui, "Steps", pattern.steps.len().to_string());
-            row(ui, "Beats", format!("{:.2}", pattern.steps.len() as f32 / spb as f32));
+            row(ui, t("prop.steps"), pattern.steps.len().to_string());
+            row(ui, t("prop.beats"), format!("{:.2}", pattern.steps.len() as f32 / spb as f32));
             if let Some(g) = view.grids.get(id) {
-                row(ui, "Sounding steps", g.notes.len().to_string());
-                row(ui, "Distinct pitches", g.rows.len().to_string());
+                row(ui, t("prop.sounding_steps"), g.notes.len().to_string());
+                row(ui, t("prop.distinct_pitches"), g.rows.len().to_string());
             }
         });
 }
@@ -451,7 +454,7 @@ fn pattern_used_and_steps(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &
     let spb = (c.metadata.steps_per_beat as usize).max(1);
     let color = view.pattern_color(l, id);
 
-    ui.label(RichText::new("Used in tracks").strong());
+    ui.label(RichText::new(t("prop.used_in_tracks")).strong());
     let mut used = false;
     for track in &l.timeline.tracks {
         let total = track.clips.iter().filter(|c| c.pattern_id == id).count();
@@ -464,18 +467,25 @@ fn pattern_used_and_steps(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &
             .iter()
             .filter(|c| c.pattern_id == id && c.is_repeat)
             .count();
-        let extra = if repeats > 0 { format!(" ({repeats} from looping)") } else { String::new() };
-        ui.label(format!("{}: {} time(s){}", track.id, total, extra));
+        let extra = if repeats > 0 {
+            tf("prop.from_looping", &[("count", &repeats.to_string())])
+        } else {
+            String::new()
+        };
+        ui.label(tf(
+            "prop.times",
+            &[("track", &track.id), ("count", &total.to_string()), ("extra", &extra)],
+        ));
     }
     if !used {
-        ui.label(RichText::new("not used").weak());
+        ui.label(RichText::new(t("prop.not_used")).weak());
     }
 
     ui.add_space(8.0);
-    ui.label(RichText::new("Steps").strong());
+    ui.label(RichText::new(t("prop.steps_grid")).strong());
     if let Some(g) = view.grids.get(id) {
         if g.rows.is_empty() {
-            ui.label(RichText::new("silent pattern (no notes)").weak());
+            ui.label(RichText::new(t("prop.silent_pattern")).weak());
         } else {
             egui::ScrollArea::horizontal()
                 .id_salt("pattern_grid_scroll")

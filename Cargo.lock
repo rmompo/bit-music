@@ -1680,6 +1680,7 @@ dependencies = [
  "bm-render",
  "bm-session",
  "bm-timeline",
+ "bm-wav",
  "eframe",
  "egui-phosphor",
  "rfd",

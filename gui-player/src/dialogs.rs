@@ -6,6 +6,7 @@ use egui_phosphor::regular;
 use serde_json::Value;
 
 use crate::config::{self, Config, ControlType, SettingDef};
+use crate::i18n::{self, t, tf};
 use crate::panels::MIN_KEY_WIDTH;
 use crate::widgets::IconButton;
 
@@ -27,15 +28,19 @@ pub enum Dialog {
     Settings,
     About,
     ConfirmQuit,
+    /// A message about the result of an operation (its text is passed to
+    /// `show`).
+    Notice,
 }
 
 impl Dialog {
     fn title(self) -> &'static str {
         match self {
-            Dialog::Libraries => "Libraries",
-            Dialog::Settings => "Settings",
-            Dialog::About => "About",
-            Dialog::ConfirmQuit => "Quit",
+            Dialog::Libraries => t("dlg.libraries"),
+            Dialog::Settings => t("dlg.settings"),
+            Dialog::About => t("dlg.about"),
+            Dialog::ConfirmQuit => t("dlg.quit"),
+            Dialog::Notice => t("dlg.export"),
         }
     }
 }
@@ -53,14 +58,21 @@ pub struct Outcome {
 /// closes it (its buttons, Esc or a click outside). `draft` is the copy of
 /// the configuration being edited while Settings is open; it is handed back
 /// in the outcome on OK and dropped otherwise.
-pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<Config>) -> Outcome {
+///
+/// `notice` is the text of a [`Dialog::Notice`].
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut Option<Dialog>,
+    draft: &mut Option<Config>,
+    notice: &str,
+) -> Outcome {
     let Some(dialog) = *open else { return Outcome::default() };
     let mut close = false;
     let mut outcome = Outcome::default();
     // One id per dialog: egui remembers a window's size by id, and sharing
     // one would make a small dialog reopen as big as the largest one.
     let modal = egui::Modal::new(egui::Id::new(("app_dialog", dialog))).show(ctx, |ui| {
-        ui.set_width(if dialog == Dialog::Settings { 480.0 } else { 400.0 });
+        ui.set_width(if dialog == Dialog::Settings { 720.0 } else { 400.0 });
         ui.heading(dialog.title());
         ui.separator();
         match dialog {
@@ -72,7 +84,10 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<C
             }
             Dialog::About => about_body(ui),
             Dialog::ConfirmQuit => {
-                ui.label("Do you want to quit bit-music gui-player?");
+                ui.label(t("dlg.quit_question"));
+            }
+            Dialog::Notice => {
+                ui.add(egui::Label::new(notice).wrap());
             }
         }
         // A horizontal line separates the content from the button bar.
@@ -83,26 +98,26 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<C
         match dialog {
             Dialog::ConfirmQuit => {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t("btn.cancel")).clicked() {
                         close = true;
                     }
-                    if ui.button("Quit").clicked() {
+                    if ui.button(t("btn.quit")).clicked() {
                         outcome.quit = true;
                     }
                 });
             }
             Dialog::Settings => {
                 ui.horizontal(|ui| {
-                    if ui.button("Reset all to defaults").clicked() {
+                    if ui.button(t("btn.reset_all")).clicked() {
                         if let Some(draft) = draft.as_mut() {
                             draft.reset_user_settings();
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t("btn.cancel")).clicked() {
                             close = true;
                         }
-                        if ui.button("OK").clicked() {
+                        if ui.button(t("btn.ok")).clicked() {
                             outcome.settings = draft.take();
                             close = true;
                         }
@@ -111,7 +126,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, draft: &mut Option<C
             }
             _ => {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
+                    if ui.button(t("btn.close")).clicked() {
                         close = true;
                     }
                 });
@@ -135,35 +150,72 @@ fn settings_body(ui: &mut egui::Ui, draft: &mut Config) {
         .show(ui, |ui| {
             for def in config::user_definitions() {
                 ui.vertical(|ui| {
-                    ui.set_width(260.0);
-                    ui.label(&def.title);
-                    if !def.description.is_empty() {
-                        ui.label(RichText::new(&def.description).weak().small());
+                    ui.set_width(240.0);
+                    ui.label(setting_text(&def.key, "title", &def.title));
+                    let description = setting_text(&def.key, "description", &def.description);
+                    if !description.is_empty() {
+                        ui.label(RichText::new(description).weak().small());
                     }
                 });
                 setting_control(ui, def, draft);
                 let changed = def.default.is_some() && draft.value(&def.key) != def.default;
+                // Square like the control next to it, as tall as the control.
+                let side = ui.spacing().interact_size.y;
                 let restore = ui
-                    .add_enabled(changed, IconButton::new(regular::ARROW_COUNTER_CLOCKWISE))
-                    .on_hover_text("Restore default");
+                    .add_enabled(changed, IconButton::new(regular::ARROW_COUNTER_CLOCKWISE).size(side))
+                    .on_hover_text(t("btn.restore_default"));
                 if restore.clicked() {
                     if let Some(default) = &def.default {
                         draft.set(&def.key, default.clone());
                     }
                 }
                 ui.end_row();
-            }
 
-            ui.label("Recent files");
-            ui.label(RichText::new(format!("{} in the history", draft.last_opened.len())).weak());
-            if ui
-                .add_enabled(!draft.last_opened.is_empty(), egui::Button::new("Clear history"))
-                .clicked()
-            {
-                draft.last_opened.clear();
+                // The history goes right under the setting for its size.
+                if def.key == config::MAX_LAST_OPENED {
+                    history_row(ui, draft);
+                }
             }
-            ui.end_row();
         });
+}
+
+/// `Recent files | N in the history [Clear history]`.
+fn history_row(ui: &mut egui::Ui, draft: &mut Config) {
+    ui.label(t("settings.recent_files"));
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(tf("settings.history_count", &[("count", &draft.last_opened.len().to_string())])).weak(),
+        );
+        if ui
+            .add_enabled(!draft.last_opened.is_empty(), egui::Button::new(t("btn.clear_history")))
+            .clicked()
+        {
+            draft.last_opened.clear();
+        }
+    });
+    ui.label(""); // nothing to restore here
+    ui.end_row();
+}
+
+/// Width of the control that holds a setting's value, in points.
+const CONTROL_WIDTH: f32 = 400.0;
+
+/// A setting's title or description in the current language, falling back to
+/// the text in the schema.
+fn setting_text(key: &str, what: &str, fallback: &str) -> String {
+    i18n::lookup(&format!("setting.{key}.{what}"))
+        .map_or_else(|| fallback.to_string(), str::to_string)
+}
+
+/// The text of one choice of a combo: translated if there is a text for it
+/// (`value.<setting>.<choice>`), the value itself otherwise.
+fn choice_label(key: &str, choice: &Value) -> String {
+    let raw = match choice {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    i18n::lookup(&format!("value.{key}.{raw}"))
+        .map_or(raw, str::to_string)
 }
 
 /// The editing widget of one setting, according to its control type.
@@ -173,6 +225,7 @@ fn setting_control(ui: &mut egui::Ui, def: &SettingDef, draft: &mut Config) {
     match (def.control_type, current) {
         (Some(ControlType::Spinner), Some(Value::Number(n))) => {
             let mut v = n.as_i64().unwrap_or_default();
+            ui.spacing_mut().slider_width = CONTROL_WIDTH - 60.0;
             if ui.add(egui::DragValue::new(&mut v).range(range)).changed() {
                 draft.set(&def.key, Value::from(v));
             }
@@ -189,23 +242,28 @@ fn setting_control(ui: &mut egui::Ui, def: &SettingDef, draft: &mut Config) {
             }
         }
         (Some(ControlType::Input), Some(Value::String(mut text))) => {
-            if ui.text_edit_singleline(&mut text).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut text).desired_width(CONTROL_WIDTH))
+                .changed()
+            {
                 draft.set(&def.key, Value::String(text));
             }
         }
-        (Some(ControlType::Combo), Some(Value::String(selected))) => {
+        (Some(ControlType::Combo), Some(selected)) => {
             egui::ComboBox::from_id_salt(&def.key)
-                .selected_text(&selected)
+                .width(CONTROL_WIDTH)
+                .selected_text(choice_label(&def.key, &selected))
                 .show_ui(ui, |ui| {
-                    for choice in def.choices.iter().filter_map(Value::as_str) {
-                        if ui.selectable_label(selected == choice, choice).clicked() {
-                            draft.set(&def.key, Value::String(choice.to_string()));
+                    for choice in &def.choices {
+                        let label = choice_label(&def.key, choice);
+                        if ui.selectable_label(*choice == selected, label).clicked() {
+                            draft.set(&def.key, choice.clone());
                         }
                     }
                 });
         }
         _ => {
-            ui.label(RichText::new("(unavailable)").weak());
+            ui.label(RichText::new(t("settings.unavailable")).weak());
         }
     }
 }
@@ -233,10 +291,10 @@ fn libraries_body(ui: &mut egui::Ui) {
         .max_height(360.0)
         .auto_shrink([true, true])
         .show(ui, |ui| {
-            ui.label(RichText::new("bit-music libraries").strong());
+            ui.label(RichText::new(t("libs.internal")).strong());
             version_table(ui, "internal_libs", INTERNAL);
             ui.add_space(8.0);
-            ui.label(RichText::new("Third-party libraries (direct dependencies)").strong());
+            ui.label(RichText::new(t("libs.third_party")).strong());
             version_table(ui, "third_party_libs", THIRD_PARTY);
         });
 }
@@ -247,24 +305,18 @@ fn about_body(ui: &mut egui::Ui) {
         .min_col_width(MIN_KEY_WIDTH)
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
-            ui.label(RichText::new("Product").weak());
+            ui.label(RichText::new(t("about.product")).weak());
             ui.label(PRODUCT);
             ui.end_row();
-            ui.label(RichText::new("Version").weak());
+            ui.label(RichText::new(t("about.version")).weak());
             ui.label(format!("v{VERSION}"));
             ui.end_row();
-            ui.label(RichText::new("License").weak());
+            ui.label(RichText::new(t("about.license")).weak());
             ui.label(LICENSE);
             ui.end_row();
         });
     ui.add_space(6.0);
-    ui.label(
-        RichText::new(
-            "The licenses of the third-party libraries it is built with are \
-             listed in THIRD_PARTY_LICENSES.md.",
-        )
-        .weak(),
-    );
+    ui.label(RichText::new(t("about.third_party_note")).weak());
 }
 
 #[cfg(test)]
@@ -288,11 +340,36 @@ mod tests {
 
     #[test]
     fn every_dialog_draws() {
-        for d in [Dialog::Libraries, Dialog::Settings, Dialog::About, Dialog::ConfirmQuit] {
+        for d in [Dialog::Libraries, Dialog::Settings, Dialog::About, Dialog::ConfirmQuit, Dialog::Notice] {
             let mut open = Some(d);
             let mut draft = Some(Config::default().with_defaults());
-            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft).quit));
+            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft, "done").quit));
             assert_eq!(open, Some(d));
         }
+    }
+
+    #[test]
+    fn every_user_setting_is_translated_in_every_language() {
+        for lang in i18n::Lang::ALL {
+            i18n::set_language(lang);
+            for def in config::user_definitions() {
+                for what in ["title", "description"] {
+                    let key = format!("setting.{}.{what}", def.key);
+                    assert!(i18n::lookup(&key).is_some(), "{lang:?}: missing {key}");
+                }
+                // Choices that are words (not numbers) have a label of their own.
+                for choice in def.choices.iter().filter_map(Value::as_str) {
+                    let key = format!("value.{}.{choice}", def.key);
+                    assert!(i18n::lookup(&key).is_some(), "{lang:?}: missing {key}");
+                }
+            }
+        }
+        i18n::set_language(i18n::Lang::English);
+    }
+
+    #[test]
+    fn choices_show_their_translation_or_the_value() {
+        assert_eq!(choice_label("lang", &Value::from("SPANISH")), "Español");
+        assert_eq!(choice_label("maxLastOpened", &Value::from(15)), "15");
     }
 }

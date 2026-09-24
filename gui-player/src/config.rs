@@ -18,6 +18,8 @@ pub const SCHEMA: &str = include_str!("../gui-player.schema.json");
 pub const CONFIG_FILE: &str = "gui-player.json";
 
 pub const MAX_LAST_OPENED: &str = "maxLastOpened";
+pub const LANG: &str = "lang";
+pub const PATH: &str = "path";
 pub const WINDOW_MAXIMIZED: &str = "windowMaximized";
 pub const WINDOW_X: &str = "windowX";
 pub const WINDOW_Y: &str = "windowY";
@@ -339,6 +341,21 @@ impl Config {
         self.value(key)?.as_bool()
     }
 
+    pub fn text(&self, key: &str) -> Option<String> {
+        self.value(key)?.as_str().map(str::to_string)
+    }
+
+    /// The language of the interface (the `lang` setting).
+    pub fn language(&self) -> crate::i18n::Lang {
+        crate::i18n::Lang::from_setting(&self.text(LANG).unwrap_or_default())
+    }
+
+    /// The folder file dialogs start in (the `path` setting), if it is not
+    /// empty.
+    pub fn files_path(&self) -> Option<String> {
+        self.text(PATH).filter(|p| !p.trim().is_empty())
+    }
+
     /// Sets a setting, adding it if it is not there yet.
     pub fn set(&mut self, key: &str, value: Value) {
         match self.settings.iter_mut().find(|s| s.key == key) {
@@ -473,7 +490,10 @@ mod tests {
             }
             if let Some(control) = d.control_type {
                 let compatible = match d.data_type {
-                    DataType::Integer => matches!(control, ControlType::Spinner | ControlType::Slider),
+                    DataType::Integer => matches!(
+                        control,
+                        ControlType::Spinner | ControlType::Slider | ControlType::Combo
+                    ),
                     DataType::Boolean => control == ControlType::Checkbox,
                     DataType::String => matches!(control, ControlType::Input | ControlType::Combo),
                 };
@@ -487,9 +507,33 @@ mod tests {
     }
 
     #[test]
-    fn the_history_limit_is_the_only_user_setting_for_now() {
+    fn the_user_settings_are_language_history_size_and_folder() {
         let user: Vec<&str> = user_definitions().map(|d| d.key.as_str()).collect();
-        assert_eq!(user, [MAX_LAST_OPENED]);
+        assert_eq!(user, [LANG, MAX_LAST_OPENED, PATH]);
+    }
+
+    #[test]
+    fn the_new_user_settings_have_their_documented_choices_and_defaults() {
+        let config = defaults();
+        assert_eq!(config.language(), crate::i18n::Lang::English);
+        assert_eq!(config.max_last_opened(), 10);
+        assert_eq!(
+            config.files_path().as_deref(),
+            Some("C:\\LocalFiles\\proyectos\\personal\\bit-music\\demos\\songs\\")
+        );
+        // Only 5, 10, 15 or 20 are accepted for the history size; only the
+        // two languages for `lang`.
+        let mut c = defaults();
+        c.set(MAX_LAST_OPENED, Value::from(7));
+        c.set(LANG, Value::from("KLINGON"));
+        let c = c.with_defaults();
+        assert_eq!(c.max_last_opened(), 10);
+        assert_eq!(c.language(), crate::i18n::Lang::English);
+        let mut c = defaults();
+        c.set(MAX_LAST_OPENED, Value::from(15));
+        c.set(LANG, Value::from("SPANISH"));
+        let c = c.with_defaults();
+        assert_eq!((c.max_last_opened(), c.language()), (15, crate::i18n::Lang::Spanish));
     }
 
     #[test]
@@ -503,11 +547,11 @@ mod tests {
     #[test]
     fn values_are_typed_and_text_from_older_files_is_accepted() {
         let config: Config = serde_json::from_str(
-            r#"{"settings":[{"key":"maxLastOpened","value":"7"},{"key":"windowMaximized","value":"false"}]}"#,
+            r#"{"settings":[{"key":"maxLastOpened","value":"15"},{"key":"windowMaximized","value":"false"}]}"#,
         )
         .unwrap();
         let config = config.with_defaults();
-        assert_eq!(config.value(MAX_LAST_OPENED), Some(Value::from(7)));
+        assert_eq!(config.value(MAX_LAST_OPENED), Some(Value::from(15)));
         assert_eq!(config.value(WINDOW_MAXIMIZED), Some(Value::Bool(false)));
     }
 

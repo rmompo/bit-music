@@ -79,6 +79,13 @@ pub fn initial_selection() -> Option<(Selection, ListTab)> {
     parse_selection(&std::env::var("BM_GUI_SELECT").ok()?)
 }
 
+/// Language forced through `BM_GUI_LANG` (`ENGLISH` or `SPANISH`), without
+/// touching the configuration.
+pub fn language_override() -> Option<crate::i18n::Lang> {
+    let value = std::env::var("BM_GUI_LANG").ok()?;
+    crate::i18n::Lang::ALL.into_iter().find(|l| l.setting_value() == value)
+}
+
 /// Preview to start when the composition opens, through `BM_GUI_PREVIEW`
 /// (`sample:<id>` or `pattern:<id>`).
 pub fn initial_preview() -> Option<Selection> {

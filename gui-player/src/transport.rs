@@ -13,7 +13,8 @@ use egui_phosphor::regular;
 
 use crate::fmt;
 use crate::widgets::IconButton;
-use crate::loader::Loaded;
+use crate::i18n::{t, tf};
+use crate::loader::{Loaded, SessionIssue};
 use crate::panels::ERR_COLOR;
 use crate::view::ViewState;
 
@@ -29,18 +30,14 @@ pub struct Transport {
     engine: Option<Engine>,
     /// Keys (`sample:<id>` / `pattern:<id>`), in the order of the engine's previews.
     preview_ids: Vec<String>,
-    error: Option<String>,
+    error: Option<SessionIssue>,
 }
 
 impl Transport {
     /// Opens the output device for the composition's rendered tracks.
     pub fn new(l: &Loaded) -> Self {
         let Some(session) = &l.session else {
-            return Self::unavailable(
-                l.session_error
-                    .clone()
-                    .unwrap_or_else(|| "no audio to play".to_string()),
-            );
+            return Self::unavailable(l.session_error.clone().unwrap_or(SessionIssue::NoAudio));
         };
         // Previews: every sample as it is, and every pattern rendered on
         // its own (with the composition's tempo).
@@ -67,11 +64,11 @@ impl Transport {
                 preview_ids,
                 error: None,
             },
-            Err(err) => Self::unavailable(err.to_string()),
+            Err(err) => Self::unavailable(SessionIssue::Other(err.to_string())),
         }
     }
 
-    fn unavailable(reason: String) -> Self {
+    fn unavailable(reason: SessionIssue) -> Self {
         Self {
             engine: None,
             preview_ids: Vec::new(),
@@ -84,8 +81,8 @@ impl Transport {
     }
 
     /// Why playback is unavailable, if it is.
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+    pub fn error(&self) -> Option<&SessionIssue> {
+        self.error.as_ref()
     }
 
     pub fn is_playing(&self) -> bool {
@@ -241,9 +238,9 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         // One toggle: shows what a click will do. It goes back to "play"
         // by itself when playback stops or reaches the end.
         let (icon, tip) = if playing {
-            (regular::PAUSE, "Pause (Space)")
+            (regular::PAUSE, t("transport.pause"))
         } else {
-            (regular::PLAY, "Play (Space)")
+            (regular::PLAY, t("transport.play"))
         };
         let toggle = ui
             .add_enabled(available, IconButton::new(icon))
@@ -253,14 +250,14 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         }
         let stop = ui
             .add_enabled(available, IconButton::new(regular::STOP))
-            .on_hover_text("Stop and rewind");
+            .on_hover_text(t("transport.stop"));
         if stop.clicked() {
             transport.stop();
         }
         ui.add_enabled_ui(available, |ui| {
             let looping = ui
                 .add(IconButton::new(regular::REPEAT).selected(view.looping))
-                .on_hover_text("Loop");
+                .on_hover_text(t("transport.loop"));
             if looping.clicked() {
                 view.looping = !view.looping;
             }
@@ -272,7 +269,7 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         ui.label(RichText::new(time_label(position, duration)).monospace());
 
         if let Some(reason) = transport.error() {
-            ui.label(RichText::new(format!("no audio: {reason}")).color(ERR_COLOR));
+            ui.label(RichText::new(tf("transport.no_audio", &[("reason", &reason.text())])).color(ERR_COLOR));
         } else {
             let mut value = position;
             ui.spacing_mut().slider_width = (ui.available_width() - 12.0).max(60.0);
@@ -330,10 +327,10 @@ mod tests {
     fn a_composition_without_audio_gives_an_unavailable_transport() {
         let mut l = demo();
         l.session = None;
-        l.session_error = Some("some samples are missing or invalid".into());
+        l.session_error = Some(SessionIssue::SamplesUnusable);
         let t = Transport::new(&l);
         assert!(!t.available());
-        assert_eq!(t.error(), Some("some samples are missing or invalid"));
+        assert_eq!(t.error(), Some(&SessionIssue::SamplesUnusable));
         // Controls are safe no-ops.
         t.play();
         t.toggle_play();

@@ -2,13 +2,29 @@
   "title": "gui-player configuration",
   "description": "Describes every entry of `settings` in gui-player.json (which lives next to the executable and is created with the defaults when missing). The file holds the current values as a list of {key, value}; this schema holds everything else about them. settingType USER entries are shown in Tools > Settings, built from controlType and values; SYSTEM entries are state the application keeps for itself (window, dividers). values.defaultValue is used when an entry is missing or invalid and by 'Restore default'; it may be absent for SYSTEM entries with no meaningful default. Also in the file, outside `settings`: `lastOpened`, the history of opened compositions (most recent first, absolute paths as {key, value}).",
   "settings": {
+    "lang": {
+      "settingType": "USER",
+      "settingTitle": "Language",
+      "settingDescription": "Language of the interface.",
+      "dataType": "string",
+      "controlType": "combo",
+      "values": { "enumValue": ["ENGLISH", "SPANISH"], "defaultValue": "ENGLISH" }
+    },
     "maxLastOpened": {
       "settingType": "USER",
       "settingTitle": "Recent files to remember",
       "settingDescription": "Maximum number of files kept in File > Open recent.",
       "dataType": "integer",
-      "controlType": "spinner",
-      "values": { "minValue": 1, "maxValue": 50, "defaultValue": 10 }
+      "controlType": "combo",
+      "values": { "enumValue": [5, 10, 15, 20], "defaultValue": 10 }
+    },
+    "path": {
+      "settingType": "USER",
+      "settingTitle": "Files folder",
+      "settingDescription": "Folder where the open and export file dialogs start.",
+      "dataType": "string",
+      "controlType": "input",
+      "values": { "defaultValue": "C:\\LocalFiles\\proyectos\\personal\\bit-music\\demos\\songs\\" }
     },
     "windowMaximized": {
       "settingType": "SYSTEM",

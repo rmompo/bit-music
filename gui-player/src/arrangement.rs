@@ -10,6 +10,7 @@ use egui_phosphor::regular;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::fmt;
+use crate::i18n::{t, tf};
 use crate::grid;
 use crate::loader::Loaded;
 use crate::widgets::{paint_scope, IconButton, ICON_BUTTON_SIZE};
@@ -155,7 +156,7 @@ pub fn show(
                     }
 
                     let label = if clip.is_repeat {
-                        format!("{} (loop)", clip.pattern_id)
+                        tf("clip.loop", &[("pattern", &clip.pattern_id)])
                     } else {
                         clip.pattern_id.clone()
                     };
@@ -171,11 +172,13 @@ pub fn show(
                     if response.clicked() {
                         clicked = Some(clip.pattern_id.clone());
                     }
-                    response.on_hover_text(format!(
-                        "{} · {} steps{}",
-                        clip.pattern_id,
-                        clip.len_steps,
-                        if clip.is_repeat { " · repeated by looping" } else { "" }
+                    response.on_hover_text(tf(
+                        "clip.hover",
+                        &[
+                            ("pattern", &clip.pattern_id),
+                            ("steps", &clip.len_steps.to_string()),
+                            ("repeat", if clip.is_repeat { t("clip.repeated") } else { "" }),
+                        ],
                     ));
                 }
             }
@@ -218,7 +221,7 @@ pub fn show(
                 let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
                 let response = ui
                     .put(button, IconButton::new(icon).selected(muted))
-                    .on_hover_text(if muted { "Unmute track" } else { "Mute track" });
+                    .on_hover_text(if muted { t("tracks.unmute") } else { t("tracks.mute") });
                 if response.clicked() {
                     view.muted[ti] = !muted;
                 }
@@ -286,7 +289,7 @@ pub fn show(
             painter.text(
                 corner.left_center() + Vec2::new(8.0, 0.0),
                 Align2::LEFT_CENTER,
-                "Tracks",
+                t("tracks.corner"),
                 FontId::proportional(11.0),
                 text_color.gamma_multiply(0.7),
             );

@@ -12,6 +12,7 @@ bm-dsp.workspace = true
 bm-format.workspace = true
 bm-playback.workspace = true
 bm-render.workspace = true
+bm-wav.workspace = true
 bm-project.workspace = true
 bm-session.workspace = true
 bm-timeline.workspace = true

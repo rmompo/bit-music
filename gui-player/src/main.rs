@@ -6,6 +6,7 @@ mod arrangement;
 mod chrome;
 mod config;
 mod dialogs;
+mod i18n;
 mod fatal;
 mod fmt;
 mod grid;
