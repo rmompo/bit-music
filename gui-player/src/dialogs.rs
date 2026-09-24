@@ -1,4 +1,5 @@
-//! Modal windows: Tools > Libraries, Tools > Settings and Help > About.
+//! Modal windows: Tools > Libraries, Tools > Settings, Help > About and the
+//! confirmation shown by File > Quit.
 
 use eframe::egui::{self, RichText};
 
@@ -21,6 +22,7 @@ pub enum Dialog {
     Libraries,
     Settings,
     About,
+    ConfirmQuit,
 }
 
 impl Dialog {
@@ -29,15 +31,18 @@ impl Dialog {
             Dialog::Libraries => "Libraries",
             Dialog::Settings => "Settings",
             Dialog::About => "About",
+            Dialog::ConfirmQuit => "Quit",
         }
     }
 }
 
 /// Shows the open dialog (if any) as a modal; clears it when the user
-/// closes it (Close button, Esc or a click outside).
-pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) {
-    let Some(dialog) = *open else { return };
+/// closes it (Close button, Esc or a click outside). Returns `true` when
+/// the user confirmed quitting.
+pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) -> bool {
+    let Some(dialog) = *open else { return false };
     let mut close = false;
+    let mut quit = false;
     let modal = egui::Modal::new(egui::Id::new("app_dialog")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.heading(dialog.title());
@@ -48,24 +53,42 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) {
                 ui.label(RichText::new("There are no settings yet.").weak());
             }
             Dialog::About => about_body(ui),
+            Dialog::ConfirmQuit => {
+                ui.label("Do you want to quit bit-music gui-player?");
+            }
         }
         ui.add_space(8.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Close").clicked() {
+        ui.vertical_centered(|ui| {
+            if dialog == Dialog::ConfirmQuit {
+                ui.horizontal(|ui| {
+                    // Two buttons, centered as a pair.
+                    ui.add_space((ui.available_width() - 150.0).max(0.0) / 2.0);
+                    if ui.button("Quit").clicked() {
+                        quit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            } else if ui.button("Close").clicked() {
                 close = true;
             }
         });
     });
-    if close || modal.should_close() {
+    if quit || close || modal.should_close() {
         *open = None;
     }
+    quit
 }
 
+/// A name / version table that fills the whole width of the window.
 fn version_table(ui: &mut egui::Ui, id: &str, libs: &[(&str, &str)]) {
+    const GAP: f32 = 16.0;
+    let column = ((ui.available_width() - GAP) / 2.0).floor();
     egui::Grid::new(id)
         .num_columns(2)
-        .min_col_width(MIN_KEY_WIDTH)
-        .spacing([16.0, 4.0])
+        .min_col_width(column)
+        .spacing([GAP, 4.0])
         .striped(true)
         .show(ui, |ui| {
             for (name, version) in libs {
@@ -136,9 +159,9 @@ mod tests {
 
     #[test]
     fn every_dialog_draws() {
-        for d in [Dialog::Libraries, Dialog::Settings, Dialog::About] {
+        for d in [Dialog::Libraries, Dialog::Settings, Dialog::About, Dialog::ConfirmQuit] {
             let mut open = Some(d);
-            egui::__run_test_ctx(|ctx| show(ctx, &mut open));
+            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open)));
             assert_eq!(open, Some(d));
         }
     }

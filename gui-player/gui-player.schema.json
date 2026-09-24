@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gui-player configuration",
+  "description": "Structure of gui-player.json, which lives next to the executable. gui-player creates it (filled with the defaults below) when it does not exist.",
+  "type": "object",
+  "properties": {
+    "settings": {
+      "description": "User settings as a list of {key, value} pairs. Values are stored as text and checked against the type of their entry in x-settings; a missing or invalid value falls back to its default.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/keyValue" },
+      "x-settings": {
+        "maxLastOpened": {
+          "description": "Maximum number of files kept in lastOpened (the oldest are dropped).",
+          "type": "integer",
+          "minimum": 1,
+          "default": 10
+        }
+      }
+    },
+    "lastOpened": {
+      "description": "History of the compositions opened, most recent first. Both key and value are the file's absolute path.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/keyValue" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "keyValue": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "string" }
+      },
+      "required": ["key", "value"],
+      "additionalProperties": false
+    }
+  }
+}

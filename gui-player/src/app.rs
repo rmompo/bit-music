@@ -5,6 +5,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
 
+use crate::config::Config;
 use crate::dialogs::{self, Dialog};
 use crate::chrome::{self, StatusLine, StatusSliders};
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
@@ -39,6 +40,10 @@ pub struct PlayerApp {
     last_title: String,
     /// The modal dialog currently open, if any.
     dialog: Option<Dialog>,
+    /// Settings and history (`gui-player.json`).
+    config: Config,
+    /// Where the configuration is stored; `None` means memory only.
+    config_path: Option<PathBuf>,
     /// Developer aid, only set through `BM_GUI_SCREENSHOT`.
     screenshot: Option<ScreenshotJob>,
 }
@@ -47,12 +52,26 @@ const APP_TITLE: &str = dialogs::PRODUCT;
 
 impl PlayerApp {
     /// `initial` is a composition to open at startup (e.g. from the command line).
-    pub fn new(ctx: &egui::Context, initial: Option<PathBuf>) -> Self {
+    /// `config_path` is where `gui-player.json` lives (created if missing);
+    /// `None` keeps the configuration in memory only.
+    pub fn new(ctx: &egui::Context, initial: Option<PathBuf>, config_path: Option<PathBuf>) -> Self {
         chrome::install_icon_font(ctx);
+        let config = match &config_path {
+            Some(path) => {
+                let (config, warning) = Config::load_or_create(path);
+                if let Some(warning) = warning {
+                    eprintln!("{warning}");
+                }
+                config
+            }
+            None => Config::default().with_defaults(),
+        };
         let mut app = Self {
             state: State::Empty,
             last_title: String::new(),
             dialog: screenshot::initial_dialog(),
+            config,
+            config_path,
             screenshot: ScreenshotJob::from_env(),
         };
         if let Some(path) = initial {
@@ -74,8 +93,10 @@ impl PlayerApp {
         let State::Loading { path, rx } = &self.state else {
             return;
         };
+        let mut opened = None;
         let next = match rx.try_recv() {
             Ok(LoadOutcome::Loaded(loaded)) => {
+                opened = Some(path.clone());
                 let mut view = ViewState::new(&loaded);
                 if let Some((selection, tab)) = screenshot::initial_selection() {
                     view.selection = selection;
@@ -100,6 +121,20 @@ impl PlayerApp {
             },
         };
         self.state = next;
+        if let Some(path) = opened {
+            self.remember(&path);
+        }
+    }
+
+    /// Adds a successfully opened composition to the history and saves it.
+    fn remember(&mut self, path: &std::path::Path) {
+        let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        self.config.record_opened(&absolute.to_string_lossy());
+        if let Some(config_path) = &self.config_path {
+            if let Err(e) = self.config.save(config_path) {
+                eprintln!("could not save {}: {e}", config_path.display());
+            }
+        }
     }
 
     fn window_title(&self) -> String {
@@ -170,7 +205,8 @@ impl eframe::App for PlayerApp {
         }
 
         let mut actions = chrome::MenuActions::default();
-        egui::Panel::top("menu_bar").show(ui, |ui| actions = chrome::menu_bar(ui));
+        let recent: Vec<&str> = self.config.last_opened.iter().map(|e| e.value.as_str()).collect();
+        egui::Panel::top("menu_bar").show(ui, |ui| actions = chrome::menu_bar(ui, &recent));
 
         // Bottom ribbons: the status bar is the lowest, the transport sits
         // right above it, directly under the arrangement.
@@ -208,15 +244,20 @@ impl eframe::App for PlayerApp {
         if actions.dialog.is_some() {
             self.dialog = actions.dialog;
         }
-        dialogs::show(&ctx, &mut self.dialog);
+        if dialogs::show(&ctx, &mut self.dialog) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
+        if let Some(path) = actions.open_path.take() {
+            self.open(&ctx, path);
+        }
         if actions.open {
             if let Some(path) = pick_file() {
                 self.open(&ctx, path);
             }
         }
         if actions.quit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.dialog = Some(Dialog::ConfirmQuit);
         }
 
         let title = self.window_title();
@@ -249,23 +290,26 @@ mod tests {
 
     #[test]
     fn starts_empty_and_titled_with_the_app_name() {
-        let app = PlayerApp::new(&egui::Context::default(), None);
+        let app = PlayerApp::new(&egui::Context::default(), None, None);
         assert!(matches!(app.state, State::Empty));
         assert_eq!(app.window_title(), "bit-music gui-player");
     }
 
     #[test]
     fn opening_the_demo_ends_up_ready_with_the_composition_title() {
-        let mut app = PlayerApp::new(&egui::Context::default(), Some(demo()));
+        let mut app = PlayerApp::new(&egui::Context::default(), Some(demo()), None);
         assert!(matches!(app.state, State::Loading { .. }));
         wait_until_loaded(&mut app);
         assert!(matches!(app.state, State::Ready(_)));
         assert_eq!(app.window_title(), "Demo - bit-music gui-player");
+        // A successful open goes into the history; a failed one does not.
+        assert_eq!(app.config.last_opened.len(), 1);
+        assert!(app.config.last_opened[0].key.ends_with("song1.bm1"));
     }
 
     #[test]
     fn a_loader_thread_that_dies_ends_up_failed_instead_of_loading_forever() {
-        let mut app = PlayerApp::new(&egui::Context::default(), None);
+        let mut app = PlayerApp::new(&egui::Context::default(), None, None);
         let (tx, rx) = std::sync::mpsc::channel::<LoadOutcome>();
         drop(tx); // the thread went away without answering
         app.state = State::Loading {
@@ -278,9 +322,10 @@ mod tests {
 
     #[test]
     fn opening_a_missing_file_ends_up_failed() {
-        let mut app = PlayerApp::new(&egui::Context::default(), Some("/no/such/file.bm1".into()));
+        let mut app = PlayerApp::new(&egui::Context::default(), Some("/no/such/file.bm1".into()), None);
         wait_until_loaded(&mut app);
         assert!(matches!(app.state, State::Failed { .. }));
         assert_eq!(app.window_title(), "bit-music gui-player");
+        assert!(app.config.last_opened.is_empty());
     }
 }

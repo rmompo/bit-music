@@ -17,4 +17,6 @@ bm-session.workspace = true
 bm-timeline.workspace = true
 eframe.workspace = true
 egui-phosphor.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 rfd.workspace = true

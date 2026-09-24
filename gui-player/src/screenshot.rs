@@ -91,6 +91,7 @@ pub fn initial_dialog() -> Option<crate::dialogs::Dialog> {
         "libraries" => Some(Dialog::Libraries),
         "settings" => Some(Dialog::Settings),
         "about" => Some(Dialog::About),
+        "quit" => Some(Dialog::ConfirmQuit),
         _ => None,
     }
 }

@@ -1,6 +1,8 @@
 //! Window chrome and non-content states: menu bar, status bar, and the
 //! empty / loading / failed screens.
 
+use std::path::PathBuf;
+
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular;
 
@@ -14,35 +16,48 @@ use crate::view::STEP_WIDTH_RANGE;
 pub struct MenuActions {
     pub open: bool,
     pub quit: bool,
+    /// A file picked from File > Open recent.
+    pub open_path: Option<PathBuf>,
     /// A modal dialog the user asked for (Tools / Help menus).
     pub dialog: Option<Dialog>,
 }
 
-pub fn menu_bar(ui: &mut egui::Ui) -> MenuActions {
+/// `recent` are the paths for File > Open recent, newest first.
+pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str]) -> MenuActions {
     let mut actions = MenuActions::default();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
-            if ui.button("Open…").clicked() {
+            if ui.button("Open").clicked() {
                 actions.open = true;
                 ui.close();
             }
+            ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                ui.menu_button("Open recent", |ui| {
+                    for path in recent {
+                        if ui.button(*path).clicked() {
+                            actions.open_path = Some(PathBuf::from(path));
+                            ui.close();
+                        }
+                    }
+                });
+            });
             if ui.button("Quit").clicked() {
                 actions.quit = true;
                 ui.close();
             }
         });
         ui.menu_button("Tools", |ui| {
-            if ui.button("Libraries…").clicked() {
+            if ui.button("Libraries").clicked() {
                 actions.dialog = Some(Dialog::Libraries);
                 ui.close();
             }
-            if ui.button("Settings…").clicked() {
+            if ui.button("Settings").clicked() {
                 actions.dialog = Some(Dialog::Settings);
                 ui.close();
             }
         });
         ui.menu_button("Help", |ui| {
-            if ui.button("About…").clicked() {
+            if ui.button("About").clicked() {
                 actions.dialog = Some(Dialog::About);
                 ui.close();
             }
@@ -120,7 +135,7 @@ fn status_text(ui: &mut egui::Ui, status: &StatusLine) {
 pub fn empty_state(ui: &mut egui::Ui) {
     ui.centered_and_justified(|ui| {
         ui.label(
-            RichText::new("Open a .bm1 composition (File > Open…) or drop one here")
+            RichText::new("Open a .bm1 composition (File > Open) or drop one here")
                 .heading()
                 .weak(),
         );
@@ -140,7 +155,7 @@ pub fn failed_state(ui: &mut egui::Ui, file: &str, message: &str) {
         ui.add_space(ui.available_height() / 3.0);
         ui.label(RichText::new(format!("Could not open {file}")).heading().color(ERR_COLOR));
         ui.label(message);
-        ui.label(RichText::new("Open another file with File > Open… or drop one here").weak());
+        ui.label(RichText::new("Open another file with File > Open or drop one here").weak());
     });
 }
 
@@ -170,7 +185,7 @@ mod tests {
     #[test]
     fn menu_bar_reports_no_action_when_nothing_is_clicked() {
         let mut actions = None;
-        egui::__run_test_ui(|ui| actions = Some(menu_bar(ui)));
+        egui::__run_test_ui(|ui| actions = Some(menu_bar(ui, &["/a/song.bm1"])));
         assert_eq!(actions, Some(MenuActions::default()));
     }
 }

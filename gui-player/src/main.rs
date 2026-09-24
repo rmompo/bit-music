@@ -4,6 +4,7 @@
 mod app;
 mod arrangement;
 mod chrome;
+mod config;
 mod dialogs;
 mod fatal;
 mod fmt;
@@ -43,6 +44,6 @@ fn run() -> eframe::Result {
     eframe::run_native(
         "bit-music gui-player",
         options,
-        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial)))),
+        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial, config::Config::default_path())))),
     )
 }
