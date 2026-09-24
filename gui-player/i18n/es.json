@@ -106,5 +106,14 @@
   "setting.maxLastOpened.title": "Archivos recientes a recordar",
   "setting.maxLastOpened.description": "Número máximo de archivos en Archivo > Abrir reciente.",
   "setting.path.title": "Carpeta de archivos",
-  "setting.path.description": "Carpeta en la que empiezan los diálogos de abrir y exportar."
+  "setting.path.description": "Carpeta en la que empiezan los diálogos de abrir y exportar.",
+  "dlg.errors": "Errores",
+  "errors.tooltip": "Errores: {count}",
+  "errors.none": "No hay errores.",
+  "errors.remove": "Quitar este error",
+  "btn.clear_all": "Borrar todo",
+  "error.stream": "error en el flujo de audio (puede que se haya desconectado el dispositivo)",
+  "error.config_save": "no se pudo guardar {path}: {error}",
+  "status.mute": "Silenciar",
+  "status.unmute": "Activar el sonido"
 }

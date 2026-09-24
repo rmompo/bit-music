@@ -13,9 +13,8 @@ use egui_phosphor::regular;
 
 use crate::fmt;
 use crate::widgets::IconButton;
-use crate::i18n::{t, tf};
+use crate::i18n::t;
 use crate::loader::{Loaded, SessionIssue};
-use crate::panels::ERR_COLOR;
 use crate::view::ViewState;
 
 fn sample_key(id: &str) -> String {
@@ -78,6 +77,12 @@ impl Transport {
 
     pub fn available(&self) -> bool {
         self.engine.is_some()
+    }
+
+    /// `true` if the audio stream reported an error (e.g. the device was
+    /// unplugged).
+    pub fn has_stream_error(&self) -> bool {
+        self.engine.as_ref().is_some_and(Engine::has_stream_error)
     }
 
     /// Why playback is unavailable, if it is.
@@ -268,17 +273,16 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         let duration = transport.duration_seconds();
         ui.label(RichText::new(time_label(position, duration)).monospace());
 
-        if let Some(reason) = transport.error() {
-            ui.label(RichText::new(tf("transport.no_audio", &[("reason", &reason.text())])).color(ERR_COLOR));
-        } else {
-            let mut value = position;
-            ui.spacing_mut().slider_width = (ui.available_width() - 12.0).max(60.0);
-            let response = ui.add(
-                egui::Slider::new(&mut value, 0.0..=duration.max(0.001)).show_value(false),
-            );
-            if response.changed() {
-                transport.seek(value);
-            }
+        // Without audio the slider is there but disabled; the reason is in
+        // the error log (see the footer).
+        let mut value = position;
+        ui.spacing_mut().slider_width = (ui.available_width() - 12.0).max(60.0);
+        let response = ui.add_enabled(
+            available,
+            egui::Slider::new(&mut value, 0.0..=duration.max(0.001)).show_value(false),
+        );
+        if response.changed() {
+            transport.seek(value);
         }
     });
 }

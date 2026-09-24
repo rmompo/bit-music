@@ -15,6 +15,7 @@ struct Package {
 }
 
 fn main() {
+    embed_windows_icon(Path::new(env!("CARGO_MANIFEST_DIR")));
     let lock_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.lock");
     println!("cargo:rerun-if-changed={}", lock_path.display());
     println!("cargo:rerun-if-changed=build.rs");
@@ -98,3 +99,6 @@ fn parse(lock: &str) -> BTreeMap<String, Package> {
     }
     packages
 }
+
+// Puts the application icon into the Windows executable (shared with `bm`).
+include!("../assets/windows_icon.rs");

@@ -13,11 +13,18 @@ pub struct IconButton<'a> {
     icon: &'a str,
     selected: bool,
     side: f32,
+    color: Option<Color32>,
 }
 
 impl<'a> IconButton<'a> {
     pub fn new(icon: &'a str) -> Self {
-        Self { icon, selected: false, side: ICON_BUTTON_SIZE }
+        Self { icon, selected: false, side: ICON_BUTTON_SIZE, color: None }
+    }
+
+    /// A color for the icon (the default text color otherwise).
+    pub fn color(mut self, color: Color32) -> Self {
+        self.color = Some(color);
+        self
     }
 
     /// A different side, in points (the icon scales with it).
@@ -34,8 +41,12 @@ impl<'a> IconButton<'a> {
 
 impl Widget for IconButton<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
+        let mut icon = RichText::new(self.icon).size(ICON_SIZE * self.side / ICON_BUTTON_SIZE);
+        if let Some(color) = self.color {
+            icon = icon.color(color);
+        }
         ui.add(
-            Button::new(RichText::new(self.icon).size(ICON_SIZE * self.side / ICON_BUTTON_SIZE))
+            Button::new(icon)
                 .min_size(Vec2::splat(self.side))
                 .selected(self.selected),
         )

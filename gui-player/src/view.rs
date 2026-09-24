@@ -44,8 +44,10 @@ pub struct ViewState {
     pub step_width: f32,
     /// Loop playback when it reaches the end.
     pub looping: bool,
-    /// Master volume, 0.0..=1.0.
+    /// Master volume, 0.0..=1.0. Muted means 0.
     pub volume: f32,
+    /// The last volume that was not 0: what un-muting goes back to.
+    pub last_volume: f32,
     /// Vertical divider: percentage of the top row's width taken by A.
     pub tabs_width_percent: f32,
     /// Horizontal divider: percentage of the height taken by C (the
@@ -73,6 +75,7 @@ impl ViewState {
             step_width: DEFAULT_STEP_WIDTH,
             looping: false,
             volume: 1.0,
+            last_volume: 1.0,
             tabs_width_percent: 30.0,
             arrangement_height_percent: 50.0,
             divider_limits: DividerLimits::default(),

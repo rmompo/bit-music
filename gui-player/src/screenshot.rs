@@ -79,6 +79,25 @@ pub fn initial_selection() -> Option<(Selection, ListTab)> {
     parse_selection(&std::env::var("BM_GUI_SELECT").ok()?)
 }
 
+/// `BM_GUI_NO_ERRORS=1`: keep the error log empty (screenshot mode only), to
+/// see the footer without errors.
+pub fn keep_errors_empty() -> bool {
+    std::env::var("BM_GUI_NO_ERRORS").is_ok()
+}
+
+/// Master volume to start with, through `BM_GUI_VOLUME` (0.0 to 1.0).
+pub fn initial_volume() -> Option<f32> {
+    let v: f32 = std::env::var("BM_GUI_VOLUME").ok()?.parse().ok()?;
+    Some(v.clamp(0.0, 1.0))
+}
+
+/// `BM_GUI_ICON=1`: draw only the application icon's glyph, large, on black
+/// (with `BM_GUI_SCREENSHOT`), which `scripts/gen-app-icon.py` turns into the
+/// icon files.
+pub fn icon_mode() -> bool {
+    std::env::var("BM_GUI_ICON").is_ok()
+}
+
 /// Language forced through `BM_GUI_LANG` (`ENGLISH` or `SPANISH`), without
 /// touching the configuration.
 pub fn language_override() -> Option<crate::i18n::Lang> {
@@ -105,6 +124,7 @@ pub fn initial_dialog() -> Option<crate::dialogs::Dialog> {
         "settings" => Some(Dialog::Settings),
         "about" => Some(Dialog::About),
         "quit" => Some(Dialog::ConfirmQuit),
+        "errors" => Some(Dialog::Errors),
         _ => None,
     }
 }

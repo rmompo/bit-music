@@ -6,8 +6,9 @@ use egui_phosphor::regular;
 use serde_json::Value;
 
 use crate::config::{self, Config, ControlType, SettingDef};
+use crate::errors::{self, ErrorLog};
 use crate::i18n::{self, t, tf};
-use crate::panels::MIN_KEY_WIDTH;
+use crate::panels::{ERR_COLOR, MIN_KEY_WIDTH};
 use crate::widgets::IconButton;
 
 /// Product name, as shown in the title bar and in About.
@@ -31,6 +32,8 @@ pub enum Dialog {
     /// A message about the result of an operation (its text is passed to
     /// `show`).
     Notice,
+    /// The list of errors (the log).
+    Errors,
 }
 
 impl Dialog {
@@ -41,6 +44,7 @@ impl Dialog {
             Dialog::About => t("dlg.about"),
             Dialog::ConfirmQuit => t("dlg.quit"),
             Dialog::Notice => t("dlg.export"),
+            Dialog::Errors => t("dlg.errors"),
         }
     }
 }
@@ -52,6 +56,8 @@ pub struct Outcome {
     pub quit: bool,
     /// The user accepted (OK) the edited configuration of Tools > Settings.
     pub settings: Option<Config>,
+    /// The area the dialog took on screen this frame (for tests).
+    pub area: Option<egui::Rect>,
 }
 
 /// Shows the open dialog (if any) as a modal; clears it when the user
@@ -65,6 +71,7 @@ pub fn show(
     open: &mut Option<Dialog>,
     draft: &mut Option<Config>,
     notice: &str,
+    errors: &mut ErrorLog,
 ) -> Outcome {
     let Some(dialog) = *open else { return Outcome::default() };
     let mut close = false;
@@ -72,7 +79,11 @@ pub fn show(
     // One id per dialog: egui remembers a window's size by id, and sharing
     // one would make a small dialog reopen as big as the largest one.
     let modal = egui::Modal::new(egui::Id::new(("app_dialog", dialog))).show(ctx, |ui| {
-        ui.set_width(if dialog == Dialog::Settings { 720.0 } else { 400.0 });
+        ui.set_width(match dialog {
+            Dialog::Settings => 720.0,
+            Dialog::Errors => 820.0,
+            _ => 400.0,
+        });
         ui.heading(dialog.title());
         ui.separator();
         match dialog {
@@ -89,6 +100,7 @@ pub fn show(
             Dialog::Notice => {
                 ui.add(egui::Label::new(notice).wrap());
             }
+            Dialog::Errors => errors_body(ui, errors),
         }
         // A horizontal line separates the content from the button bar.
         ui.add_space(4.0);
@@ -124,6 +136,19 @@ pub fn show(
                     });
                 });
             }
+            Dialog::Errors => {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(t("btn.close")).clicked() {
+                        close = true;
+                    }
+                    if ui
+                        .add_enabled(!errors.is_empty(), egui::Button::new(t("btn.clear_all")))
+                        .clicked()
+                    {
+                        errors.clear();
+                    }
+                });
+            }
             _ => {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(t("btn.close")).clicked() {
@@ -133,11 +158,95 @@ pub fn show(
             }
         }
     });
+    outcome.area = Some(modal.response.rect);
     if outcome.quit || close || modal.should_close() {
         *open = None;
         *draft = None;
     }
     outcome
+}
+
+/// The body of the errors window: the stack of errors, newest first, each
+/// as an element with its time, its text (over as many lines as it needs) and
+/// a button that removes it. Scrolls vertically.
+fn errors_body(ui: &mut egui::Ui, errors: &mut ErrorLog) {
+    let mut remove = None;
+    // The list has a fixed size, however many errors there are: the window
+    // does not change when they are removed.
+    let height = ERRORS_LIST_HEIGHT.min(ui.ctx().content_rect().height() * 0.7);
+    egui::ScrollArea::vertical()
+        .min_scrolled_height(height)
+        .max_height(height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if errors.is_empty() {
+                ui.label(RichText::new(t("errors.none")).weak());
+                return;
+            }
+            // A row per error, as a card: a soft background, no lines. One
+            // width for all of them, worked out once (measuring it for each
+            // would let them grow, one after the other).
+            let card = egui::Frame::new()
+                .fill(ui.visuals().widgets.inactive.weak_bg_fill.gamma_multiply(0.55))
+                .corner_radius(4.0)
+                .inner_margin(8.0);
+            let inner_width = ui.available_width() - card.total_margin().sum().x;
+            for entry in errors.entries() {
+                card.show(ui, |ui| {
+                    ui.set_width(inner_width);
+                    if error_row(ui, entry) {
+                        remove = Some(entry.id);
+                    }
+                });
+            }
+        });
+    if let Some(id) = remove {
+        errors.remove(id);
+    }
+}
+
+/// Height of the errors list, in points.
+const ERRORS_LIST_HEIGHT: f32 = 460.0;
+
+/// One error as a single row: the time over the text on the left, and the
+/// remove button at the right, centered vertically on the whole row.
+/// Returns whether the button was clicked.
+fn error_row(ui: &mut egui::Ui, entry: &errors::ErrorEntry) -> bool {
+    let mut remove = false;
+    // Aligned to the top: a centered row would start below the card's top
+    // margin (the text block is created with no height yet), leaving more
+    // room above the time than below the text.
+    ui.horizontal_top(|ui| {
+        let button = ui.spacing().interact_size.y + 8.0;
+        let cell = button + 20.0;
+        let text_width = (ui.available_width() - cell - ui.spacing().item_spacing.x).max(40.0);
+
+        let text = ui.allocate_ui_with_layout(
+            egui::vec2(text_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(text_width);
+                ui.label(RichText::new(errors::format_time(entry.time)).weak().small());
+                ui.add(egui::Label::new(RichText::new(&entry.text).color(ERR_COLOR)).wrap());
+            },
+        );
+
+        // The button goes exactly at the middle of the text block (the time
+        // and the text together), in the middle of its cell at the right.
+        let block = text.response.rect;
+        let center = egui::pos2(
+            block.right() + ui.spacing().item_spacing.x + cell / 2.0,
+            block.center().y,
+        );
+        remove = ui
+            .put(
+                egui::Rect::from_center_size(center, egui::Vec2::splat(button)),
+                IconButton::new(regular::X_CIRCLE).size(button),
+            )
+            .on_hover_text(t("errors.remove"))
+            .clicked();
+    });
+    remove
 }
 
 /// The body of Tools > Settings, built from the schema: one row per
@@ -340,10 +449,19 @@ mod tests {
 
     #[test]
     fn every_dialog_draws() {
-        for d in [Dialog::Libraries, Dialog::Settings, Dialog::About, Dialog::ConfirmQuit, Dialog::Notice] {
+        for d in [
+            Dialog::Libraries,
+            Dialog::Settings,
+            Dialog::About,
+            Dialog::ConfirmQuit,
+            Dialog::Notice,
+            Dialog::Errors,
+        ] {
             let mut open = Some(d);
             let mut draft = Some(Config::default().with_defaults());
-            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft, "done").quit));
+            let mut errors = ErrorLog::default();
+            errors.push("something went wrong\nover two lines");
+            egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft, "done", &mut errors).quit));
             assert_eq!(open, Some(d));
         }
     }
@@ -365,6 +483,31 @@ mod tests {
             }
         }
         i18n::set_language(i18n::Lang::English);
+    }
+
+    #[test]
+    fn the_errors_window_keeps_its_size_however_many_errors_there_are() {
+        let size_with = |count: usize| {
+            let mut errors = ErrorLog::default();
+            for n in 0..count {
+                errors.push(format!("error number {n}, with a text long enough to need a few words"));
+            }
+            let mut open = Some(Dialog::Errors);
+            let mut draft = None;
+            let mut size = None;
+            egui::__run_test_ctx(|ctx| {
+                // A few frames so the layout settles.
+                for _ in 0..3 {
+                    let outcome = show(ctx, &mut open, &mut draft, "", &mut errors);
+                    size = outcome.area.map(|a| a.size());
+                }
+            });
+            size.unwrap()
+        };
+        let many = size_with(12);
+        assert_eq!(size_with(0), many);
+        assert_eq!(size_with(1), many);
+        assert_eq!(size_with(3), many);
     }
 
     #[test]

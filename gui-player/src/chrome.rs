@@ -8,7 +8,9 @@ use egui_phosphor::regular;
 
 use crate::dialogs::Dialog;
 use crate::i18n::{t, tf};
+use crate::errors::ErrorLog;
 use crate::loader::Loaded;
+use crate::widgets::IconButton;
 use crate::panels::{ERR_COLOR, OK_COLOR};
 use crate::view::STEP_WIDTH_RANGE;
 
@@ -83,14 +85,29 @@ pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str], can_export: bool) -> MenuAct
 pub enum StatusLine<'a> {
     Empty,
     Loading(&'a str),
-    Failed { file: &'a str, message: &'a str },
+    /// The file that could not be opened (the reason goes to the error log).
+    Failed(&'a str),
     Ready(&'a Loaded),
 }
 
 /// Sliders shown at the right of the status bar when a composition is open.
 pub struct StatusSliders<'a> {
     pub volume: &'a mut f32,
+    /// The last audible volume, to go back to when un-muting.
+    pub last_volume: &'a mut f32,
     pub zoom: &'a mut f32,
+}
+
+/// Mutes (volume to 0, remembering the volume it had) or, if already muted,
+/// goes back to the last audible volume. Muted means a volume of 0, however it
+/// got there, so dragging the slider up un-mutes too.
+pub fn toggle_mute(volume: &mut f32, last_volume: &mut f32) {
+    if *volume > 0.0 {
+        *last_volume = *volume;
+        *volume = 0.0;
+    } else {
+        *volume = if *last_volume > 0.0 { *last_volume } else { 1.0 };
+    }
 }
 
 /// Registers the Phosphor icon font next to egui's default fonts.
@@ -100,25 +117,85 @@ pub fn install_icon_font(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-/// The bottom ribbon: status on the left and, when a composition is open,
-/// the master volume and the arrangement's zoom sliders on the right.
-pub fn status_bar(ui: &mut egui::Ui, status: &StatusLine, sliders: Option<StatusSliders>) {
+/// The bottom ribbon, left to right: file, integrity and samples; then, in
+/// all the space that is left, the icon that opens the list of errors and, at
+/// its right, the latest error (cut with "…" when it does not fit) — both only
+/// while there are errors; then, on the right, the master volume and the zoom
+/// sliders.
+///
+/// Returns `true` when the errors icon was clicked.
+pub fn status_bar(
+    ui: &mut egui::Ui,
+    status: &StatusLine,
+    sliders: Option<StatusSliders>,
+    errors: &ErrorLog,
+) -> bool {
+    let mut open_errors = false;
     ui.horizontal(|ui| {
-        // Status text first, from the left...
+        // 1, 2 and 3: from the left.
         status_text(ui, status);
-        // ...then the zoom, right-aligned in whatever space is left.
-        if let Some(StatusSliders { volume, zoom }) = sliders {
-            // Right-to-left: the first widget added ends up rightmost.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // A line between them and the errors block, always there (the errors
+        // themselves only show while there are any).
+        ui.separator();
+
+        // The rest, right to left: the first widget added ends up rightmost.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 7 and 6.
+            if let Some(StatusSliders { volume, last_volume, zoom }) = sliders {
                 ui.add(egui::Slider::new(zoom, STEP_WIDTH_RANGE).show_value(false));
                 ui.label(t("status.zoom"));
                 ui.separator();
                 ui.add(egui::Slider::new(volume, 0.0..=1.0).show_value(false))
                     .on_hover_text(tf("status.volume", &[("percent", &format!("{:.0}", *volume * 100.0))]));
-                ui.label(regular::SPEAKER_HIGH);
-            });
-        }
+                // Remember the last audible volume, then the mute button: the
+                // crossed-out speaker while muted (volume 0).
+                if *volume > 0.0 {
+                    *last_volume = *volume;
+                }
+                let muted = *volume <= 0.0;
+                let (icon, tip) = if muted {
+                    (regular::SPEAKER_SLASH, t("status.unmute"))
+                } else {
+                    (regular::SPEAKER_HIGH, t("status.mute"))
+                };
+                let side = ui.spacing().interact_size.y;
+                if ui
+                    .add(IconButton::new(icon).size(side))
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    toggle_mute(volume, last_volume);
+                }
+                ui.separator();
+            }
+
+            // The middle block, laid out right to left: first the latest error,
+            // filling all the space up to the icon and cut with "…"...
+            let Some(latest) = errors.latest() else { return };
+            let side = ui.spacing().interact_size.y;
+            let width = (ui.available_width() - side - ui.spacing().item_spacing.x).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, side),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    // One tooltip, with the full text: the label's own one (which
+                    // egui shows when the text is cut) is turned off.
+                    ui.add(
+                        egui::Label::new(RichText::new(&latest.text).color(ERR_COLOR))
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                    )
+                    .on_hover_text(&latest.text);
+                },
+            );
+            // ...and then, at its left, the icon that opens the list.
+            let icon = ui
+                .add(IconButton::new(regular::BUG).color(ERR_COLOR).size(side))
+                .on_hover_text(tf("errors.tooltip", &[("count", &errors.len().to_string())]));
+            open_errors = icon.clicked();
+        });
     });
+    open_errors
 }
 
 fn status_text(ui: &mut egui::Ui, status: &StatusLine) {
@@ -130,8 +207,8 @@ fn status_text(ui: &mut egui::Ui, status: &StatusLine) {
             ui.spinner();
             ui.label(tf("status.loading", &[("file", file)]));
         }
-        StatusLine::Failed { file, message } => {
-            ui.label(RichText::new(tf("status.could_not_open", &[("file", file), ("message", message)])).color(ERR_COLOR));
+        StatusLine::Failed(file) => {
+            ui.label(*file);
         }
         StatusLine::Ready(l) => {
             ui.label(l.file_name());
@@ -184,18 +261,42 @@ mod tests {
         egui::__run_test_ui(|ui| empty_state(ui));
         egui::__run_test_ui(|ui| loading_state(ui, "song.bm1"));
         egui::__run_test_ui(|ui| failed_state(ui, "song.bm1", "boom"));
-        egui::__run_test_ui(|ui| status_bar(ui, &StatusLine::Empty, None));
-        let (mut zoom, mut volume) = (16.0, 1.0);
+        let mut errors = ErrorLog::default();
+        egui::__run_test_ui(|ui| assert!(!status_bar(ui, &StatusLine::Empty, None, &errors)));
+        errors.push("a long error message that will not fit in the middle of a small footer ribbon");
+        errors.push("audio: could not get the device's default config");
+        egui::__run_test_ui(|ui| {
+            status_bar(ui, &StatusLine::Failed("a.bm1"), None, &errors);
+        });
+        let (mut zoom, mut volume, mut last_volume) = (16.0, 1.0, 1.0);
         egui::__run_test_ui(|ui| {
             status_bar(
                 ui,
                 &StatusLine::Empty,
-                Some(StatusSliders { volume: &mut volume, zoom: &mut zoom }),
-            )
+                Some(StatusSliders { volume: &mut volume, last_volume: &mut last_volume, zoom: &mut zoom }),
+                &errors,
+            );
         });
-        egui::__run_test_ui(|ui| {
-            status_bar(ui, &StatusLine::Failed { file: "a.bm1", message: "bad" }, None)
-        });
+    }
+
+    #[test]
+    fn muting_goes_to_zero_and_unmuting_goes_back_to_the_previous_volume() {
+        let (mut volume, mut last) = (0.6, 1.0);
+        toggle_mute(&mut volume, &mut last);
+        assert_eq!(volume, 0.0);
+        assert_eq!(last, 0.6);
+        toggle_mute(&mut volume, &mut last);
+        assert_eq!(volume, 0.6);
+        // Dragged down to 0 by hand: it counts as muted, and the icon goes
+        // back to the last audible volume.
+        last = 0.3;
+        volume = 0.0;
+        toggle_mute(&mut volume, &mut last);
+        assert_eq!(volume, 0.3);
+        // Nothing to go back to: full volume.
+        (volume, last) = (0.0, 0.0);
+        toggle_mute(&mut volume, &mut last);
+        assert_eq!(volume, 1.0);
     }
 
     #[test]

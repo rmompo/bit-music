@@ -106,5 +106,14 @@
   "setting.maxLastOpened.title": "Recent files to remember",
   "setting.maxLastOpened.description": "Maximum number of files kept in File > Open recent.",
   "setting.path.title": "Files folder",
-  "setting.path.description": "Folder where the open and export file dialogs start."
+  "setting.path.description": "Folder where the open and export file dialogs start.",
+  "dlg.errors": "Errors",
+  "errors.tooltip": "Errors: {count}",
+  "errors.none": "No errors.",
+  "errors.remove": "Remove this error",
+  "btn.clear_all": "Clear all",
+  "error.stream": "audio stream error (the device may have been disconnected)",
+  "error.config_save": "could not save {path}: {error}",
+  "status.mute": "Mute",
+  "status.unmute": "Unmute"
 }

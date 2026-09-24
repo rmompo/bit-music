@@ -29,6 +29,8 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 eframe = "0.36"
 egui-phosphor = "0.14"
+# Local time of day for the error log (no default features: only the system clock).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rfd = "0.17"
 
 [profile.release]

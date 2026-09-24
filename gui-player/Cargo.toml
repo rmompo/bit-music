@@ -7,6 +7,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "bm-gui"
+path = "src/main.rs"
+
 [dependencies]
 bm-dsp.workspace = true
 bm-format.workspace = true
@@ -18,6 +22,7 @@ bm-session.workspace = true
 bm-timeline.workspace = true
 eframe.workspace = true
 egui-phosphor.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rfd.workspace = true

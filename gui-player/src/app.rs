@@ -7,6 +7,7 @@ use eframe::egui;
 
 use crate::config::{Config, DividerState};
 use crate::dialogs::{self, Dialog};
+use crate::errors::ErrorLog;
 use crate::i18n::{self, t, tf};
 use crate::chrome::{self, StatusLine, StatusSliders};
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
@@ -35,6 +36,8 @@ struct Ready {
     loaded: Loaded,
     view: ViewState,
     transport: Transport,
+    /// The audio stream's failure has been put in the error log.
+    stream_error_logged: bool,
 }
 
 pub struct PlayerApp {
@@ -46,6 +49,8 @@ pub struct PlayerApp {
     quit_confirmed: bool,
     /// The text of the open [`Dialog::Notice`].
     notice: String,
+    /// What went wrong, newest first.
+    errors: ErrorLog,
     /// The copy of the configuration being edited in Tools > Settings.
     settings_draft: Option<Config>,
     /// Settings and history (`gui-player.json`).
@@ -66,11 +71,13 @@ impl PlayerApp {
     /// `None` keeps the configuration in memory only.
     pub fn new(ctx: &egui::Context, initial: Option<PathBuf>, config_path: Option<PathBuf>) -> Self {
         chrome::install_icon_font(ctx);
+        let mut errors = ErrorLog::default();
         let config = match &config_path {
             Some(path) => {
                 let (config, warning) = Config::load_or_create(path);
                 if let Some(warning) = warning {
                     eprintln!("{warning}");
+                    errors.push(warning);
                 }
                 config
             }
@@ -81,8 +88,11 @@ impl PlayerApp {
             state: State::Empty,
             last_title: String::new(),
             dialog: screenshot::initial_dialog(),
-            quit_confirmed: false,
+            // The developer screenshot mode closes the window by itself when it
+            // is done, without asking.
+            quit_confirmed: screenshot::ScreenshotJob::from_env().is_some(),
             notice: String::new(),
+            errors,
             settings_draft: None,
             config,
             config_path,
@@ -124,11 +134,17 @@ impl PlayerApp {
                 view.tabs_width_percent = (dividers.tabs_width_percent as f32).clamp(a_lo, a_hi);
                 view.arrangement_height_percent =
                     (dividers.arrangement_height_percent as f32).clamp(c_lo, c_hi);
+                if let Some(volume) = screenshot::initial_volume() {
+                    view.volume = volume;
+                }
                 if let Some((selection, tab)) = screenshot::initial_selection() {
                     view.select(selection);
                     view.tab = tab;
                 }
                 let transport = Transport::new(&loaded);
+                if let Some(issue) = transport.error() {
+                    self.errors.push(tf("transport.no_audio", &[("reason", &issue.text())]));
+                }
                 match screenshot::initial_preview() {
                     Some(view::Selection::Sample(id)) => transport.preview_sample(&id),
                     Some(view::Selection::Pattern(id)) => transport.preview_pattern(&id),
@@ -142,14 +158,25 @@ impl PlayerApp {
                     loaded: *loaded,
                     view,
                     transport,
+                    stream_error_logged: false,
                 }))
             }
-            Ok(LoadOutcome::Failed { path, message }) => State::Failed { path, message },
+            Ok(LoadOutcome::Failed { path, message }) => {
+                self.errors.push(tf(
+                    "status.could_not_open",
+                    &[("file", &file_name(&path)), ("message", &message)],
+                ));
+                State::Failed { path, message }
+            }
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => State::Failed {
-                path: path.clone(),
-                message: t("error.loader_stopped").to_string(),
-            },
+            Err(TryRecvError::Disconnected) => {
+                let message = t("error.loader_stopped").to_string();
+                self.errors.push(tf(
+                    "status.could_not_open",
+                    &[("file", &file_name(path)), ("message", &message)],
+                ));
+                State::Failed { path: path.clone(), message }
+            }
         };
         self.state = next;
         if let Some(path) = opened {
@@ -170,11 +197,16 @@ impl PlayerApp {
             dialog = dialog.set_directory(dir);
         }
         let Some(path) = dialog.save_file() else { return };
-        self.notice = match write_export(session, &path) {
-            Ok(()) => tf("export.done", &[("path", &path.display().to_string())]),
-            Err(err) => tf("export.failed", &[("error", &err.to_string())]),
-        };
-        self.dialog = Some(Dialog::Notice);
+        match write_export(session, &path) {
+            // A success is reported in a dialog; a failure goes to the log.
+            Ok(()) => {
+                self.notice = tf("export.done", &[("path", &path.display().to_string())]);
+                self.dialog = Some(Dialog::Notice);
+            }
+            Err(err) => {
+                self.errors.push(tf("export.failed", &[("error", &err.to_string())]));
+            }
+        }
     }
 
     /// Adds a successfully opened composition to the history and saves it.
@@ -189,6 +221,10 @@ impl PlayerApp {
         if let Some(config_path) = &self.config_path {
             if let Err(e) = self.config.save(config_path) {
                 eprintln!("could not save {}: {e}", config_path.display());
+                self.errors.push(tf(
+                    "error.config_save",
+                    &[("path", &config_path.display().to_string()), ("error", &e.to_string())],
+                ));
             }
         }
     }
@@ -265,10 +301,7 @@ fn status_of(state: &State) -> StatusLine<'_> {
     match state {
         State::Empty => StatusLine::Empty,
         State::Loading { path, .. } => StatusLine::Loading(borrowed_file_name(path)),
-        State::Failed { path, message } => StatusLine::Failed {
-            file: borrowed_file_name(path),
-            message,
-        },
+        State::Failed { path, .. } => StatusLine::Failed(borrowed_file_name(path)),
         State::Ready(r) => StatusLine::Ready(&r.loaded),
     }
 }
@@ -322,6 +355,25 @@ impl eframe::App for PlayerApp {
         let ctx = ui.ctx().clone();
         i18n::set_language(screenshot::language_override().unwrap_or_else(|| self.config.language()));
 
+        if screenshot::icon_mode() {
+            // Developer aid: just the icon glyph, white on black, filling the window.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
+                .show(ui, |ui| {
+                    let rect = ui.max_rect();
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        egui_phosphor::regular::FILE_AUDIO,
+                        egui::FontId::proportional(rect.height().min(rect.width()) * 0.9),
+                        egui::Color32::WHITE,
+                    );
+                });
+            if let Some(job) = &mut self.screenshot {
+                job.tick(&ctx);
+            }
+            return;
+        }
         if let Some(path) = dropped_path(&ctx) {
             self.open(&ctx, path);
         }
@@ -335,11 +387,19 @@ impl eframe::App for PlayerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::ConfirmQuit);
         }
+        if self.screenshot.is_some() && screenshot::keep_errors_empty() {
+            self.errors.clear();
+        }
         self.track_dividers();
         self.track_window(&ctx);
 
         // Space toggles play/pause; keep the engine in step with the view.
+        let mut stream_error = false;
         if let State::Ready(r) = &mut self.state {
+            if r.transport.has_stream_error() && !r.stream_error_logged {
+                r.stream_error_logged = true;
+                stream_error = true;
+            }
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
                 r.transport.toggle_play();
             }
@@ -347,6 +407,10 @@ impl eframe::App for PlayerApp {
             if r.transport.is_playing() || r.transport.any_preview_playing() {
                 ctx.request_repaint();
             }
+        }
+
+        if stream_error {
+            self.errors.push(t("error.stream"));
         }
 
         let mut actions = chrome::MenuActions::default();
@@ -357,14 +421,25 @@ impl eframe::App for PlayerApp {
 
         // Bottom ribbons: the status bar is the lowest, the transport sits
         // right above it, directly under the arrangement.
-        egui::Panel::bottom("status_bar").show(ui, |ui| match &mut self.state {
-            State::Ready(r) => {
-                let Ready { loaded, view, .. } = &mut **r;
-                let sliders = StatusSliders { volume: &mut view.volume, zoom: &mut view.step_width };
-                chrome::status_bar(ui, &StatusLine::Ready(loaded), Some(sliders));
-            }
-            other => chrome::status_bar(ui, &status_of(other), None),
+        let errors = &self.errors;
+        let mut open_errors = false;
+        egui::Panel::bottom("status_bar").show(ui, |ui| {
+            open_errors = match &mut self.state {
+                State::Ready(r) => {
+                    let Ready { loaded, view, .. } = &mut **r;
+                    let sliders = StatusSliders {
+                        volume: &mut view.volume,
+                        last_volume: &mut view.last_volume,
+                        zoom: &mut view.step_width,
+                    };
+                    chrome::status_bar(ui, &StatusLine::Ready(loaded), Some(sliders), errors)
+                }
+                other => chrome::status_bar(ui, &status_of(other), None, errors),
+            };
         });
+        if open_errors {
+            self.dialog = Some(Dialog::Errors);
+        }
         if let State::Ready(r) = &mut self.state {
             egui::Panel::bottom("transport_bar").show(ui, |ui| {
                 let Ready { view, transport, .. } = &mut **r;
@@ -379,7 +454,7 @@ impl eframe::App for PlayerApp {
                 chrome::failed_state(ui, &file_name(path), message)
             }
             State::Ready(ready) => {
-                let Ready { loaded, view, transport } = &mut **ready;
+                let Ready { loaded, view, transport, .. } = &mut **ready;
                 let total = ui.available_height();
                 // As for the vertical divider, the size comes from the stored
                 // percentage (see `panels::top_row`).
@@ -422,7 +497,13 @@ impl eframe::App for PlayerApp {
                 self.settings_draft = Some(self.config.clone());
             }
         }
-        let outcome = dialogs::show(&ctx, &mut self.dialog, &mut self.settings_draft, &self.notice);
+        let outcome = dialogs::show(
+            &ctx,
+            &mut self.dialog,
+            &mut self.settings_draft,
+            &self.notice,
+            &mut self.errors,
+        );
         if outcome.quit {
             self.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

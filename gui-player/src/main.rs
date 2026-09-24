@@ -6,6 +6,7 @@ mod arrangement;
 mod chrome;
 mod config;
 mod dialogs;
+mod errors;
 mod i18n;
 mod fatal;
 mod fmt;
@@ -30,6 +31,16 @@ fn main() {
     }
 }
 
+/// The application icon (Phosphor's `file-audio`), for the window and the
+/// taskbar. Made by `scripts/gen-app-icon.py`.
+fn app_icon() -> egui::IconData {
+    egui::IconData {
+        rgba: include_bytes!("../../assets/icon-128.rgba").to_vec(),
+        width: 128,
+        height: 128,
+    }
+}
+
 fn run() -> eframe::Result {
     // Optional first argument: a .bm1 to open at startup.
     let initial = std::env::args_os().nth(1).map(PathBuf::from);
@@ -42,6 +53,7 @@ fn run() -> eframe::Result {
         .unwrap_or_else(|| config::Config::default().with_defaults().window());
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("bit-music gui-player")
+        .with_icon(std::sync::Arc::new(app_icon()))
         .with_inner_size([window.width as f32, window.height as f32])
         .with_min_inner_size([640.0, 420.0])
         .with_maximized(window.maximized);
@@ -55,4 +67,19 @@ fn run() -> eframe::Result {
         options,
         Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial, config_path)))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_app_icon_is_a_128_square_of_rgba_pixels() {
+        let icon = app_icon();
+        assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
+        // The corners are transparent (rounded tile) and the middle is opaque.
+        assert_eq!(icon.rgba[3], 0);
+        let middle = ((64 * 128 + 8) * 4 + 3) as usize;
+        assert_eq!(icon.rgba[middle], 255);
+    }
 }
