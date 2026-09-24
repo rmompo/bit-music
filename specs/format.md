@@ -92,10 +92,17 @@ sequence of notes or silences.
 
 Each element of `steps` is:
 - `null` → silence at that step
-- a **full note**: `<letter A-G><octave 0-8><optional accidental # or b>`, e.g. `"C4"`, `"C4#"`, `"D3b"`
+- a **full note**: `<letter A-G><optional accidental # or b><octave 0-8>`, the
+  way DAWs write it, e.g. `"C4"`, `"C#4"`, `"Db3"`
 
-Note letters are case-insensitive (`"c4#"` is accepted). Enharmonic spellings
-(`C4#` and `D4b`) are the same pitch.
+Note letters are case-insensitive (`"c#4"` is accepted). Enharmonic spellings
+(`C#4` and `Db4`) are the same pitch. The accidental goes before the octave, as
+in `sample.rootNote` (`"C#"`, `"Eb"`); the older spelling with the accidental
+after the octave (`"C4#"`, `"D3b"`) is still **accepted when reading**, so
+existing compositions keep working, but the tools write and document the
+canonical one. (The accidental can appear once, in one place: `"C#4#"` is
+rejected.) The format version stays `1.0`: nothing that was valid stops being
+valid.
 
 Each `step` lasts a fixed unit of time (the pattern's "grid"). The exact
 step↔real-time relationship is derived from `metadata.bpm` and

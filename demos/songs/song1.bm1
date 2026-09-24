@@ -40,7 +40,7 @@
     {
       "id": "saxA",
       "sample": "sax",
-      "steps": ["C4", "D4", "E4", "G4", "F4#", "D4", "C4", null, "C4", "D4", "E4", "G4"]
+      "steps": ["C4", "D4", "E4", "G4", "F#4", "D4", "C4", null, "C4", "D4", "E4", "G4"]
     }
   ],
   "arrangement": {

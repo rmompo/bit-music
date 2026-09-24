@@ -73,7 +73,8 @@ pub struct Pattern {
     pub id: String,
     /// id of a `Sample` in `Composition::samples`.
     pub sample: String,
-    /// Each element is a full note with octave (e.g. "C4", "C4#", "D3b")
+    /// Each element is a full note with octave (e.g. "C4", "C#4", "Db3"; the
+    /// older "C4#" and "D3b" are still read)
     /// or `null` (silence). Length must be a multiple of 4 (validated in
     /// `validate`).
     pub steps: Vec<Option<String>>,

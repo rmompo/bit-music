@@ -1,8 +1,10 @@
 //! Parsing and validation of bit-music musical notation.
 //!
 //! Two formats coexist in the format:
-//! - **Full note** (used in `pattern.steps`): `<letter A-G><octave 0-8><accidental?>`
-//!   e.g. `"C4"`, `"C4#"`, `"D3b"`.
+//! - **Full note** (used in `pattern.steps`): `<letter A-G><accidental?><octave 0-8>`,
+//!   the way DAWs write it, e.g. `"C4"`, `"C#4"`, `"Db3"`. The older order
+//!   with the accidental after the octave (`"C4#"`, `"D3b"`) is still
+//!   accepted when reading.
 //! - **Note name** (used in `sample.rootNote` and in the `metadata.others`
 //!   defaults): just `<letter><accidental?>`, e.g. `"C"`, `"C#"`, `"Eb"`.
 
@@ -23,7 +25,7 @@ pub struct Note {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NoteParseError {
-    #[error("invalid note format: '{0}' (expected NOTE+OCTAVE[#|b], e.g. 'C4', 'D3b')")]
+    #[error("invalid note format: '{0}' (expected NOTE[#|b]OCTAVE, e.g. 'C4', 'C#4', 'Db3')")]
     InvalidFormat(String),
     #[error("invalid note letter '{0}' (must be A-G)")]
     InvalidLetter(char),
@@ -32,39 +34,55 @@ pub enum NoteParseError {
 }
 
 /// Parses a full note with octave, e.g. as used in `pattern.steps`.
+///
+/// The canonical spelling puts the accidental before the octave (`C#4`,
+/// `Db3`, as in a DAW). The older one, with the accidental after the octave
+/// (`C4#`, `D3b`), is accepted too. Letters are case-insensitive, and `b` or
+/// `B` after the letter or the octave mean flat.
 pub fn parse_note(input: &str) -> Result<Note, NoteParseError> {
-    let mut chars = input.chars();
-    let letter = chars
-        .next()
-        .ok_or_else(|| NoteParseError::InvalidFormat(input.to_string()))?
-        .to_ascii_uppercase();
+    let invalid = || NoteParseError::InvalidFormat(input.to_string());
+    let accidental_of = |c: char| match c {
+        '#' => Some(Accidental::Sharp),
+        'b' | 'B' => Some(Accidental::Flat),
+        _ => None,
+    };
 
+    let mut chars = input.chars().peekable();
+    let letter = chars.next().ok_or_else(invalid)?.to_ascii_uppercase();
     if !('A'..='G').contains(&letter) {
         return Err(NoteParseError::InvalidLetter(letter));
     }
 
-    let rest: String = chars.collect();
-    let split_at = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    let (digits, suffix) = rest.split_at(split_at);
-
-    if digits.is_empty() {
-        return Err(NoteParseError::InvalidFormat(input.to_string()));
+    // Canonical: the accidental right after the letter.
+    let mut accidental = chars.peek().copied().and_then(accidental_of);
+    if accidental.is_some() {
+        chars.next();
     }
-    let octave: u8 = digits
-        .parse()
-        .map_err(|_| NoteParseError::InvalidFormat(input.to_string()))?;
+
+    let mut digits = String::new();
+    while let Some(c) = chars.peek().copied().filter(char::is_ascii_digit) {
+        digits.push(c);
+        chars.next();
+    }
+    if digits.is_empty() {
+        return Err(invalid());
+    }
+    let octave: u8 = digits.parse().map_err(|_| invalid())?;
     if octave > 8 {
         return Err(NoteParseError::OctaveOutOfRange(octave));
     }
 
-    let accidental = match suffix {
-        "" => None,
-        "#" => Some(Accidental::Sharp),
-        "b" | "B" => Some(Accidental::Flat),
-        _ => return Err(NoteParseError::InvalidFormat(input.to_string())),
-    };
+    // Older spelling: the accidental after the octave (only if there was none
+    // before it).
+    if let Some(c) = chars.next() {
+        match accidental_of(c) {
+            Some(a) if accidental.is_none() => accidental = Some(a),
+            _ => return Err(invalid()),
+        }
+    }
+    if chars.next().is_some() {
+        return Err(invalid());
+    }
 
     Ok(Note {
         letter,
@@ -121,6 +139,18 @@ pub fn semitone_offset(letter: char, accidental: Option<Accidental>) -> i32 {
     (base + delta).rem_euclid(12)
 }
 
+impl std::fmt::Display for Note {
+    /// The canonical spelling, the accidental before the octave: `C#4`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let accidental = match self.accidental {
+            None => "",
+            Some(Accidental::Sharp) => "#",
+            Some(Accidental::Flat) => "b",
+        };
+        write!(f, "{}{accidental}{}", self.letter, self.octave)
+    }
+}
+
 impl Note {
     /// Absolute semitone (octave included), useful for computing pitch
     /// differences between two notes. Not a standard MIDI number (there is
@@ -164,11 +194,45 @@ mod tests {
     }
 
     #[test]
+    fn the_accidental_goes_before_the_octave_like_in_a_daw() {
+        let note = |letter, octave, accidental| Note { letter, octave, accidental };
+        assert_eq!(parse_note("C#4").unwrap(), note('C', 4, Some(Accidental::Sharp)));
+        assert_eq!(parse_note("Db3").unwrap(), note('D', 3, Some(Accidental::Flat)));
+        assert_eq!(parse_note("bb2").unwrap(), note('B', 2, Some(Accidental::Flat)));
+        assert_eq!(parse_note("g#8").unwrap(), note('G', 8, Some(Accidental::Sharp)));
+        assert_eq!(parse_note("EB5").unwrap(), note('E', 5, Some(Accidental::Flat)));
+    }
+
+    #[test]
+    fn the_older_order_with_the_accidental_after_the_octave_still_reads() {
+        // Both spellings are the same note.
+        for (old, new) in [("C4#", "C#4"), ("D3b", "Db3"), ("g8#", "G#8"), ("B2b", "Bb2"), ("A4", "A4")] {
+            assert_eq!(parse_note(old).unwrap(), parse_note(new).unwrap(), "{old} vs {new}");
+        }
+    }
+
+    #[test]
+    fn notes_print_in_the_canonical_spelling() {
+        for (input, canonical) in [("C4#", "C#4"), ("D3b", "Db3"), ("e5", "E5"), ("F#4", "F#4")] {
+            assert_eq!(parse_note(input).unwrap().to_string(), canonical);
+        }
+    }
+
+    #[test]
     fn rejects_invalid_notes() {
         assert!(parse_note("H4").is_err());
         assert!(parse_note("C9").is_err());
         assert!(parse_note("C").is_err());
         assert!(parse_note("C4##").is_err());
+        // The accidental only once, and only in one place.
+        assert!(parse_note("C#4#").is_err());
+        assert!(parse_note("C##4").is_err());
+        assert!(parse_note("Cb4b").is_err());
+        assert!(parse_note("C#").is_err());
+        assert!(parse_note("#4").is_err());
+        assert!(parse_note("C4x").is_err());
+        assert!(parse_note("C 4").is_err());
+        assert!(parse_note("").is_err());
     }
 
     #[test]
