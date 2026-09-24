@@ -5,6 +5,7 @@
 //! This crate never prints; it returns values and structured errors so each
 //! application decides how to present them.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bm_format::{Composition, FormatError};
@@ -32,6 +33,9 @@ pub struct Project {
     /// The composition. Every `sample.file` is already resolved to a usable
     /// path (absolute as written, or relative to the `.bm1`'s directory).
     pub composition: Composition,
+    /// Each sample's `file` exactly as written in the `.bm1`, by sample id
+    /// (for showing what is stored, as opposed to the resolved path).
+    pub declared_files: HashMap<String, String>,
 }
 
 /// Result of checking one sample file.
@@ -60,6 +64,12 @@ pub fn load(path: &Path) -> Result<Project, ProjectError> {
 
     let mut composition = bm_format::parse_composition(&raw)?;
 
+    let declared_files = composition
+        .samples
+        .iter()
+        .map(|s| (s.id.clone(), s.file.clone()))
+        .collect();
+
     let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
     for sample in &mut composition.samples {
         sample.file = resolve_sample_path(base_dir, &sample.file);
@@ -68,6 +78,7 @@ pub fn load(path: &Path) -> Result<Project, ProjectError> {
     Ok(Project {
         path: path.to_path_buf(),
         composition,
+        declared_files,
     })
 }
 
@@ -121,6 +132,17 @@ mod tests {
             resolve_sample_path(base, "/etc/samples/kick.wav"),
             "/etc/samples/kick.wav"
         );
+    }
+
+    #[test]
+    fn load_keeps_the_declared_file_next_to_the_resolved_one() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demos/songs/song1.bm1");
+        let project = load(&path).unwrap();
+        let kick = project.composition.samples.iter().find(|s| s.id == "kick").unwrap();
+        let declared = &project.declared_files["kick"];
+        assert!(!Path::new(declared).is_absolute());
+        assert_ne!(&kick.file, declared);
+        assert!(kick.file.ends_with(declared.trim_start_matches("./")));
     }
 
     #[test]
