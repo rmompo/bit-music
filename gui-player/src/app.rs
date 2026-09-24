@@ -5,7 +5,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
 
-use crate::config::Config;
+use crate::config::{Config, DividerState};
 use crate::dialogs::{self, Dialog};
 use crate::chrome::{self, StatusLine, StatusSliders};
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
@@ -44,6 +44,8 @@ pub struct PlayerApp {
     config: Config,
     /// Where the configuration is stored; `None` means memory only.
     config_path: Option<PathBuf>,
+    /// The configuration changed (window state) and is waiting to be saved.
+    config_dirty_since: Option<std::time::Instant>,
     /// Developer aid, only set through `BM_GUI_SCREENSHOT`.
     screenshot: Option<ScreenshotJob>,
 }
@@ -72,6 +74,7 @@ impl PlayerApp {
             dialog: screenshot::initial_dialog(),
             config,
             config_path,
+            config_dirty_since: None,
             screenshot: ScreenshotJob::from_env(),
         };
         if let Some(path) = initial {
@@ -98,6 +101,9 @@ impl PlayerApp {
             Ok(LoadOutcome::Loaded(loaded)) => {
                 opened = Some(path.clone());
                 let mut view = ViewState::new(&loaded);
+                let dividers = self.config.dividers();
+                view.tabs_width_percent = dividers.tabs_width_percent as f32;
+                view.top_height_percent = dividers.top_height_percent as f32;
                 if let Some((selection, tab)) = screenshot::initial_selection() {
                     view.selection = selection;
                     view.tab = tab;
@@ -130,9 +136,70 @@ impl PlayerApp {
     fn remember(&mut self, path: &std::path::Path) {
         let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         self.config.record_opened(&absolute.to_string_lossy());
+        self.save_config();
+    }
+
+    fn save_config(&mut self) {
+        self.config_dirty_since = None;
         if let Some(config_path) = &self.config_path {
             if let Err(e) = self.config.save(config_path) {
                 eprintln!("could not save {}: {e}", config_path.display());
+            }
+        }
+    }
+
+    /// Keeps the divider positions of the open composition in the
+    /// configuration (saved by `track_window`'s delayed write).
+    fn track_dividers(&mut self) {
+        let State::Ready(r) = &self.state else { return };
+        let now = DividerState {
+            tabs_width_percent: r.view.tabs_width_percent.round() as i32,
+            top_height_percent: r.view.top_height_percent.round() as i32,
+        };
+        if now != self.config.dividers() {
+            self.config.set_dividers(&now);
+            self.config_dirty_since = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Keeps the window state in the configuration and saves it shortly
+    /// after the last change (so dragging or resizing does not write on
+    /// every frame).
+    fn track_window(&mut self, ctx: &egui::Context) {
+        const SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+
+        let (maximized, minimized, outer, inner) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.maximized, v.minimized, v.outer_rect, v.inner_rect)
+        });
+        // Nothing to learn while minimized (positions are meaningless then)
+        // or before the system has reported the window.
+        if minimized == Some(true) {
+            return;
+        }
+        if let Some(maximized) = maximized {
+            let mut state = self.config.window();
+            state.maximized = maximized;
+            // Only a restored window's geometry is worth remembering.
+            if !maximized {
+                if let Some(inner) = inner {
+                    state.width = (inner.width().round() as i32).max(200);
+                    state.height = (inner.height().round() as i32).max(150);
+                }
+                if let Some(outer) = outer {
+                    state.position = Some((outer.min.x.round() as i32, outer.min.y.round() as i32));
+                }
+            }
+            if state != self.config.window() {
+                self.config.set_window(&state);
+                self.config_dirty_since = Some(std::time::Instant::now());
+            }
+        }
+        if let Some(since) = self.config_dirty_since {
+            if since.elapsed() >= SAVE_DELAY {
+                self.save_config();
+            } else {
+                ctx.request_repaint_after(SAVE_DELAY);
             }
         }
     }
@@ -192,6 +259,8 @@ impl eframe::App for PlayerApp {
         if let Some(job) = &mut self.screenshot {
             job.tick(&ctx);
         }
+        self.track_dividers();
+        self.track_window(&ctx);
 
         // Space toggles play/pause; keep the engine in step with the view.
         if let State::Ready(r) = &mut self.state {
@@ -233,10 +302,25 @@ impl eframe::App for PlayerApp {
             }
             State::Ready(ready) => {
                 let Ready { loaded, view, transport } = &mut **ready;
-                egui::Panel::top("info_panel")
-                    .resizable(true)
-                    .default_size(330.0)
+                let total = ui.available_height();
+                // As for the vertical divider, the size comes from the stored
+                // percentage (see `panels::top_row`).
+                let top = egui::Panel::top("info_panel")
+                    .resizable(false)
+                    .exact_size(total * view.top_height_percent / 100.0)
                     .show(ui, |ui| panels::top_row(ui, loaded, view, transport));
+                let edge = top.response.rect;
+                let delta = panels::splitter(
+                    ui,
+                    "top_splitter",
+                    edge.left_bottom(),
+                    edge.width(),
+                    panels::Axis::Horizontal,
+                );
+                if total > 0.0 {
+                    view.top_height_percent =
+                        panels::clamp_percent(view.top_height_percent + delta / total * 100.0, total);
+                }
                 arrangement::show(ui, loaded, view, transport.playhead(), transport.is_playing());
             }
         });

@@ -14,6 +14,45 @@
           "type": "integer",
           "minimum": 1,
           "default": 10
+        },
+        "windowMaximized": {
+          "description": "Whether the window was left maximized. When false, the window opens restored, at windowX/windowY with windowWidth x windowHeight.",
+          "type": "boolean",
+          "default": true
+        },
+        "windowX": {
+          "description": "Horizontal position of the restored window. No default: without it (or without windowY) the system places the window.",
+          "type": "integer"
+        },
+        "windowY": {
+          "description": "Vertical position of the restored window. No default: see windowX.",
+          "type": "integer"
+        },
+        "windowWidth": {
+          "description": "Width of the restored window, in points.",
+          "type": "integer",
+          "minimum": 200,
+          "default": 1100
+        },
+        "tabsWidthPercent": {
+          "description": "Share of the top row's width taken by the tabs panel (A); the properties panel (B) gets the rest. Position of the vertical divider.",
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 90,
+          "default": 30
+        },
+        "topHeightPercent": {
+          "description": "Share of the height taken by the top row (A + B); the arrangement (C) gets the rest. Position of the horizontal divider.",
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 90,
+          "default": 50
+        },
+        "windowHeight": {
+          "description": "Height of the restored window, in points.",
+          "type": "integer",
+          "minimum": 150,
+          "default": 720
         }
       }
     },

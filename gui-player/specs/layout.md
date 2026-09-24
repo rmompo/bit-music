@@ -12,13 +12,15 @@ libraries it builds on are implemented (see `../../specs/libraries.md`).
 
 - **Done:**
   - Window with menu bar (`File > Open`, `Quit`); opening a `.bm1` by dialog, drag and drop, or as the first command-line argument; loading on a background thread; status bar; empty, loading and failed screens. A composition whose samples are missing still opens (with warnings and no audio).
-  - **B** tabs *Metadata* (the default) / *Samples* / *Patterns*. The two lists show names with a color chip (the sample's color); clicking selects. Each sample has a **play button** that sounds it once at its original pitch, and each pattern one that plays it once from its start (with its sample, notes and the composition's tempo); both sound on top of the transport, which is not touched.
-  - **C** properties (vertical scroll) of the selected sample or pattern. A pattern shows its facts, the **step grid** (piano-roll style: one row per distinct pitch, one column per step, beats shaded and numbered) and where it is used; a sample shows status, root note, length, sample rate, file path and the patterns that use it.
-  - **D** arrangement: one row per track with a **mute icon button** (speaker / crossed-out speaker) and name, and a step grid where every pattern is a filled block colored by its sample with its notes drawn inside, loop repetitions dimmed, column shading, beat lines, a pinned ruler (column numbers and start times) and pinned track column, shared 2D scroll, zoom slider, and click-to-select a block (which selects the pattern in C). Selecting a pattern highlights its blocks.
+  - **A** tabs *Metadata* (the default) / *Samples* / *Patterns*. The two lists show names with a color chip (the sample's color); clicking selects. Each sample has a **play button** that sounds it once at its original pitch, and each pattern one that plays it once from its start (with its sample, notes and the composition's tempo); both sound on top of the transport, which is not touched.
+  - **B** properties (vertical scroll) of the selected sample or pattern. A pattern shows its facts, the **step grid** (piano-roll style: one row per distinct pitch, one column per step, beats shaded and numbered) and where it is used; a sample shows status, root note, length, sample rate, the file exactly as stored in the composition and the patterns that use it.
+  - **C** arrangement: one row per track with a **mute icon button** (speaker / crossed-out speaker) and name, and a step grid where every pattern is a filled block colored by its sample with its notes drawn inside, loop repetitions dimmed, column shading, beat lines, a pinned ruler (column numbers and start times) and pinned track column, shared 2D scroll, zoom slider, and click-to-select a block (which selects the pattern in A and B). Selecting a pattern highlights its blocks.
   - **Transport ribbon**, directly under the arrangement: one **play/pause toggle** (it shows what a click will do, and goes back to *play* by itself on stop or at the end), stop, loop (icons with tooltips), `elapsed / total` and a position slider (dragging seeks). Space toggles play/pause. It drives the `bm-playback` engine; the mute buttons and Loop are pushed to the engine every frame. A red **playback cursor** (line plus a marker on the ruler) crosses the arrangement, and the view scrolls to keep it visible while playing. Without an audio device (or without audio because samples are missing) the controls are disabled and the reason is shown; the app still works as a viewer.
   - **Status bar**: file, integrity, sample count on the left; on the right the **master volume** slider (transport and sample previews) and, to its right, the arrangement **zoom** slider.
-- **Menus**: `File` (*Open*, *Open recent* with the history, *Quit*, which asks for confirmation in a modal), `Tools` (*Libraries*, *Settings*) and `Help` (*About*). Each of the three opens a **modal** window closed with its Close button, Esc or a click outside. *Libraries* lists the internal `bm-*` libraries and the direct third-party dependencies with their versions, generated at build time from `Cargo.lock` (`gui-player/build.rs`), so it always matches what is linked. *Settings* is an empty placeholder. *About* shows the product ("bit-music gui-player"), its version, its license (MIT OR Apache-2.0) and a pointer to `THIRD_PARTY_LICENSES.md`.
+- **Menus**: `File` (*Open*, *Open recent* with the history, *Quit*, which asks for confirmation in a modal), `Tools` (*Libraries*, *Settings*) and `Help` (*About*). Each of the three opens a **modal** window whose action buttons are always at the bottom right, closed with its Close button, Esc or a click outside. *Libraries* lists the internal `bm-*` libraries and the direct third-party dependencies with their versions, generated at build time from `Cargo.lock` (`gui-player/build.rs`), so it always matches what is linked. *Settings* is an empty placeholder. *About* shows the product ("bit-music gui-player"), its version, its license (MIT OR Apache-2.0) and a pointer to `THIRD_PARTY_LICENSES.md`.
 - **Configuration**: `gui-player.json`, next to the executable, created with the defaults when missing. Its shape is described by `gui-player/gui-player.schema.json` (embedded in the executable, and the source of every setting's default): `settings` is a list of `{key, value}` (today only `maxLastOpened`, default 10) and `lastOpened` the history of successfully opened compositions, most recent first, as `{key, value}` with the absolute path in both. Reopening a file moves it to the top; the oldest entries beyond `maxLastOpened` are dropped. A corrupt file is reported on stderr and left untouched (defaults are used in memory); missing or invalid settings are reset to their default.
+- **Dividers**: the vertical one between A and B (30% / 70% by default, each side at least 120 points; it is drawn by the app itself, not by egui's panel memory, so the stored percentage is always what is applied) and the horizontal one between A + B and C (50% / 50% by default) can be dragged. Their positions are kept as percentages in the settings `tabsWidthPercent` and `topHeightPercent` (10 to 90) and restored on the next start, whatever the window size.
+- **Window state**: the settings `windowMaximized` (default `true`), `windowX`/`windowY` (optional), `windowWidth` and `windowHeight` record how the window was left, and it opens that way. While maximized only the flag changes, so restoring returns to the last restored geometry. Changes are written about 0.6 s after the last one. Where the system does not report a window position (Wayland), no position is stored and the system places the window.
 - **Icon buttons** are square (1:1) with the icon centered (`widgets::IconButton`).
 - **Icons** come from the Phosphor set (`egui-phosphor`, MIT), registered as a font at startup.
 - **Startup errors are never silent.** The Windows release build has no console, so a failure to start (no usable graphics, window creation error) and any panic on the main thread are shown in a native error dialog (and printed to stderr). If the loading thread dies, the app shows a failure instead of "Loading…" forever.
@@ -31,7 +33,7 @@ libraries it builds on are implemented (see `../../specs/libraries.md`).
 Two environment variables, meant for development only, let the UI be checked or documented without a person looking at the window:
 
 - `BM_GUI_SCREENSHOT=<file.ppm>`: after a few frames, save a screenshot of the window and quit.
-- `BM_GUI_SELECT=sample:<id>` or `pattern:<id>`: start with that element selected (so C has something to show).
+- `BM_GUI_SELECT=sample:<id>` or `pattern:<id>`: start with that element selected (so B has something to show).
 - `BM_GUI_DIALOG=libraries|settings|about|quit`: start with that modal open.
 - `BM_GUI_PLAY_AT=<seconds>`: start playing from that position as soon as the composition is open (needs an audio device), to capture the transport and cursor in action.
 
@@ -45,13 +47,13 @@ Observation: under WSLg the Wayland connection failed about every second launch 
 +----------------------------------------------------------------------+
 | File:  Open...   Quit                                                |   menu bar
 +---------------------------------------+------------------------------+
-| B [Metadata][Samples][Patterns]       | C Properties                 |   top panel
+| A [Metadata][Samples][Patterns]       | B Properties                 |   top panel
 |   metadata, or a list of names        |   detail of the item         |   (resizable)
-|   ([>] plays each sample) (scroll V)  |   selected in B or D         |
+|   ([>] plays each sample) (scroll V)  |   selected in A or C         |
 |                                       |   (scroll V)                 |
 +-----+----------------------------------------------------------------+
 | Tracks  ruler:  1 00:00.0 | 2 00:01.5 | ...                          |
-| [)] | kick   [kickA     ][kickA     ]                                |   D Arrangement
+| [)] | kick   [kickA     ][kickA     ]                                |   C Arrangement
 | [)] | snare  [snareA    ][snareA    ]                                |   (scroll V/H
 | [/] | hihat  [hihatA    ][hihatA    ]                                |    shared)
 | [)] | epiano [epianoA   ][epianoA (loop)]                            |
@@ -68,11 +70,11 @@ The arrangement has no title of its own (its corner just says "Tracks"). Legend:
 ## Areas
 
 - **Menu bar**: `File` with *Open*, *Open recent* and *Quit* (*Export WAV…* is planned).
-- **B, tabs**: *Metadata* (default): title, format version, bpm, steps per beat, seconds per step, length, and the `others` key/value pairs. *Samples* and *Patterns*: lists of names with a chip in the sample's color (a sample whose file is missing is shown in red); clicking an element selects it and shows its detail in C. Every sample and every pattern also has a play button (disabled without audio). Vertical scroll.
-- **C, properties**: the detail of what is selected in B, or of the pattern whose block was clicked in D. Vertical scroll.
-  - A **sample** shows its status, root note, length, frames, sample rate, file path and the patterns that use it.
+- **A, tabs**: *Metadata* (default): title, format version, bpm, steps per beat, seconds per step and length (the `others` key/value pairs are shown in B while this tab is open). *Samples* and *Patterns*: lists of names with a chip in the sample's color (a sample whose file is missing is shown in red); clicking an element selects it and shows its detail in B. Every sample and every pattern also has a play button (disabled without audio). Vertical scroll.
+- **B, properties**: with the *Metadata* tab open, the metadata's `others`; otherwise the detail of what is selected in A, or of the pattern whose block was clicked in C. Vertical scroll.
+  - A **sample** shows its status, root note, length, frames, sample rate, the file exactly as stored in the composition and the patterns that use it.
   - A **pattern** shows its facts (steps, beats, sounding steps, distinct pitches), the **step grid**, and the tracks that use it (noting repetitions that come from looping).
-- **D, arrangement**: one row per track inside a single shared 2D scroll area (vertical and horizontal), so all tracks scroll together, with no title of its own.
+- **C, arrangement**: one row per track inside a single shared 2D scroll area (vertical and horizontal), so all tracks scroll together, with no title of its own.
   - **Track row** = mute icon + render. The icon is the mute toggle and stays pinned while the render scrolls horizontally. The render shows the track's patterns as blocks.
   - The column **ruler** stays pinned at the top.
 - **Transport**, directly below the arrangement: play/pause toggle, stop, loop, elapsed/total time and a position (seek) bar over the whole song.
@@ -92,16 +94,16 @@ Out of scope: editing compositions (that is `gui-editor`).
 
 Implemented:
 
-- Pattern blocks with width proportional to their steps, colored by sample (the color chips in B act as the legend), notes drawn inside, loop repetitions dimmed, and `null` gaps left empty.
+- Pattern blocks with width proportional to their steps, colored by sample (the color chips in A act as the legend), notes drawn inside, loop repetitions dimmed, and `null` gaps left empty.
 - Horizontal zoom.
-- Selection links: clicking a block in D selects its pattern in B and C, and the selected pattern's blocks are outlined.
+- Selection links: clicking a block in C selects its pattern in A and B, and the selected pattern's blocks are outlined.
 - A "missing" marker for samples whose file is not usable.
 - An empty state when no file is open ("open or drop a .bm1").
 
 Not implemented yet:
 
 - Solo per track (cheap now that each track has its own buffer).
-- Highlighting in D the patterns of a sample selected in B.
+- Highlighting in C the patterns of a sample selected in A.
 - A collapsible top panel to give the arrangement the full height (it is resizable today).
 
 ## After the MVP

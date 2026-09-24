@@ -33,17 +33,25 @@ fn run() -> eframe::Result {
     // Optional first argument: a .bm1 to open at startup.
     let initial = std::env::args_os().nth(1).map(PathBuf::from);
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("bit-music gui-player")
-            .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([640.0, 420.0]),
-        ..Default::default()
-    };
+    // Open the window the way it was left (see gui-player.json).
+    let config_path = config::Config::default_path();
+    let window = config_path
+        .as_deref()
+        .map(|p| config::Config::load_or_create(p).0.window())
+        .unwrap_or_else(|| config::Config::default().with_defaults().window());
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("bit-music gui-player")
+        .with_inner_size([window.width as f32, window.height as f32])
+        .with_min_inner_size([640.0, 420.0])
+        .with_maximized(window.maximized);
+    if let Some((x, y)) = window.position {
+        viewport = viewport.with_position([x as f32, y as f32]);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
 
     eframe::run_native(
         "bit-music gui-player",
         options,
-        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial, config::Config::default_path())))),
+        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(&cc.egui_ctx, initial, config_path)))),
     )
 }

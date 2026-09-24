@@ -58,18 +58,16 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>) -> bool {
             }
         }
         ui.add_space(8.0);
-        ui.vertical_centered(|ui| {
+        // Action buttons always sit at the bottom right (right-to-left:
+        // the first one added is the rightmost).
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if dialog == Dialog::ConfirmQuit {
-                ui.horizontal(|ui| {
-                    // Two buttons, centered as a pair.
-                    ui.add_space((ui.available_width() - 150.0).max(0.0) / 2.0);
-                    if ui.button("Quit").clicked() {
-                        quit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                });
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                if ui.button("Quit").clicked() {
+                    quit = true;
+                }
             } else if ui.button("Close").clicked() {
                 close = true;
             }

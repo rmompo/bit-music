@@ -18,11 +18,84 @@ pub const ERR_COLOR: Color32 = Color32::from_rgb(230, 90, 90);
 /// in one panel line their values up.
 pub const MIN_KEY_WIDTH: f32 = 130.0;
 
-/// B | C, each with its own vertical scroll.
+/// Smallest size of either side of a divider, in points.
+const MIN_PANEL_SIZE: f32 = 120.0;
+/// Limits of a divider, in percent (same as in the configuration schema).
+pub const DIVIDER_PERCENT_RANGE: std::ops::RangeInclusive<i32> = 10..=90;
+
+/// Keeps a divider position within the schema's range and leaves at least
+/// [`MIN_PANEL_SIZE`] points on each side of `total`.
+pub fn clamp_percent(percent: f32, total: f32) -> f32 {
+    let min_by_size = (MIN_PANEL_SIZE / total.max(1.0) * 100.0).min(50.0);
+    let lo = (*DIVIDER_PERCENT_RANGE.start() as f32).max(min_by_size);
+    let hi = (*DIVIDER_PERCENT_RANGE.end() as f32).min(100.0 - min_by_size);
+    percent.clamp(lo, hi.max(lo))
+}
+
+/// Direction of a divider line.
+#[derive(Clone, Copy)]
+pub enum Axis {
+    /// A vertical line, dragged left / right.
+    Vertical,
+    /// A horizontal line, dragged up / down.
+    Horizontal,
+}
+
+/// A draggable divider line starting at `start` and `length` long. Returns
+/// how far it was dragged this frame (in points, along its normal).
+pub fn splitter(ui: &mut egui::Ui, id: &str, start: egui::Pos2, length: f32, axis: Axis) -> f32 {
+    const GRAB: f32 = 6.0;
+    let (rect, line) = match axis {
+        Axis::Vertical => (
+            egui::Rect::from_min_size(start - Vec2::new(GRAB / 2.0, 0.0), Vec2::new(GRAB, length)),
+            [start, start + Vec2::new(0.0, length)],
+        ),
+        Axis::Horizontal => (
+            egui::Rect::from_min_size(start - Vec2::new(0.0, GRAB / 2.0), Vec2::new(length, GRAB)),
+            [start, start + Vec2::new(length, 0.0)],
+        ),
+    };
+    let response = ui.interact(rect, ui.id().with(id), Sense::drag());
+    let cursor = match axis {
+        Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
+        Axis::Horizontal => egui::CursorIcon::ResizeVertical,
+    };
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    let visuals = ui.visuals();
+    let stroke = if response.dragged() {
+        visuals.widgets.active.fg_stroke
+    } else if response.hovered() {
+        visuals.widgets.hovered.fg_stroke
+    } else {
+        visuals.widgets.noninteractive.bg_stroke
+    };
+    ui.painter().line_segment(line, stroke);
+    match axis {
+        Axis::Vertical => response.drag_delta().x,
+        Axis::Horizontal => response.drag_delta().y,
+    }
+}
+
+/// A | B: the tabs and the properties, each with its own vertical scroll,
+/// with a draggable separator between them. Its position is
+/// `view.tabs_width_percent` (30% by default) and follows the user's drag.
 pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
-    ui.columns(2, |cols| {
-        lists(&mut cols[0], l, view, transport);
-        scroll(&mut cols[1], "properties_scroll", |ui| properties(ui, l, view));
+    let total = ui.available_width();
+    // The size always comes from the stored percentage, so it is applied on
+    // every start and follows the window when it is resized.
+    let tabs = egui::Panel::left("tabs_panel")
+        .resizable(false)
+        .exact_size(total * view.tabs_width_percent / 100.0)
+        .show(ui, |ui| lists(ui, l, view, transport));
+    let edge = tabs.response.rect;
+    let delta = splitter(ui, "tabs_splitter", edge.right_top(), edge.height(), Axis::Vertical);
+    if total > 0.0 {
+        view.tabs_width_percent = clamp_percent(view.tabs_width_percent + delta / total * 100.0, total);
+    }
+    egui::CentralPanel::default().show(ui, |ui| {
+        scroll(ui, "properties_scroll", |ui| properties(ui, l, view));
     });
 }
 
@@ -44,7 +117,7 @@ fn chip(ui: &mut egui::Ui, color: Color32) {
     ui.painter().rect_filled(rect, 2.0, color);
 }
 
-/// The Metadata tab of B: composition metadata.
+/// The Metadata tab: composition metadata (its `others` go to Properties).
 pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
     let m = &l.project.composition.metadata;
     egui::Grid::new("metadata_grid")
@@ -67,20 +140,25 @@ pub fn metadata(ui: &mut egui::Ui, l: &Loaded) {
                 ),
             );
         });
+}
 
-    if !m.others.is_empty() {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Others").strong());
-        egui::Grid::new("others_grid")
-            .num_columns(2)
-            .min_col_width(MIN_KEY_WIDTH)
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
-                for kv in &m.others {
-                    row(ui, &kv.key, kv.value.clone());
-                }
-            });
+/// Properties while the Metadata tab is open: the `others` key/value pairs.
+fn others_properties(ui: &mut egui::Ui, l: &Loaded) {
+    let others = &l.project.composition.metadata.others;
+    if others.is_empty() {
+        ui.label(RichText::new("This composition has no other metadata.").weak());
+        return;
     }
+    ui.label(RichText::new("Others").strong());
+    egui::Grid::new("others_grid")
+        .num_columns(2)
+        .min_col_width(MIN_KEY_WIDTH)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            for kv in others {
+                row(ui, &kv.key, kv.value.clone());
+            }
+        });
 }
 
 /// Area B: tabs (Metadata / Samples / Patterns). Clicking a name in a list
@@ -154,6 +232,10 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
 /// Area C: the detail of the selected sample or pattern.
 pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
     ui.heading("Properties");
+    if view.tab == ListTab::Metadata {
+        others_properties(ui, l);
+        return;
+    }
     match &view.selection {
         Selection::None => {
             ui.label(RichText::new("Select a sample or a pattern to see its properties.").weak());
@@ -201,7 +283,9 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
     // The path can be long, so it goes outside the table and wraps.
     ui.add_space(6.0);
     ui.label(RichText::new("File").weak());
-    ui.add(egui::Label::new(sample.file.as_str()).wrap());
+    // What is stored in the composition, not the resolved path.
+    let stored = l.project.declared_files.get(&sample.id).unwrap_or(&sample.file);
+    ui.add(egui::Label::new(stored.as_str()).wrap());
 
     let users: Vec<&str> = c
         .patterns
@@ -293,6 +377,15 @@ mod tests {
             LoadOutcome::Loaded(l) => l,
             LoadOutcome::Failed { message, .. } => panic!("demo failed to load: {message}"),
         }
+    }
+
+    #[test]
+    fn divider_percentages_stay_in_range_and_leave_room_on_both_sides() {
+        assert_eq!(clamp_percent(5.0, 1000.0), 12.0); // 120 pt minimum wins over 10 %
+        assert_eq!(clamp_percent(50.0, 1000.0), 50.0);
+        assert_eq!(clamp_percent(99.0, 1000.0), 88.0);
+        // Tiny totals cannot leave 120 pt on each side: stay centered-ish.
+        assert!(clamp_percent(30.0, 100.0) >= 10.0);
     }
 
     #[test]
