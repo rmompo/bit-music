@@ -151,6 +151,12 @@ impl Core {
         self.position.store(pos, Ordering::Relaxed);
     }
 
+    fn preview_active(&self, index: usize) -> bool {
+        self.preview_pos
+            .get(index)
+            .is_some_and(|p| p.load(Ordering::Relaxed) != IDLE)
+    }
+
     fn current_position(&self) -> usize {
         let requested = self.seek_request.load(Ordering::Relaxed);
         if requested != NO_SEEK {
@@ -280,6 +286,17 @@ impl Engine {
 
     pub fn preview_count(&self) -> usize {
         self.core.previews.len()
+    }
+
+    /// `true` while preview `index` is still sounding (so a UI can keep
+    /// its play button disabled until it ends).
+    pub fn is_preview_playing(&self, index: usize) -> bool {
+        self.core.preview_active(index)
+    }
+
+    /// `true` while any preview is sounding.
+    pub fn any_preview_playing(&self) -> bool {
+        (0..self.core.previews.len()).any(|i| self.core.preview_active(i))
     }
 
     pub fn set_looping(&self, looping: bool) {
@@ -444,8 +461,12 @@ mod tests {
         // Idle until triggered.
         assert_eq!(block(&c, 2, 1), vec![0.0, 0.0]);
         c.preview_pos[0].store(0, Ordering::Relaxed);
-        assert_eq!(block(&c, 4, 1), vec![0.1, 0.2, 0.0, 0.0]);
+        assert!(c.preview_active(0));
+        assert_eq!(block(&c, 1, 1), vec![0.1]);
+        assert!(c.preview_active(0)); // still sounding: one frame left
+        assert_eq!(block(&c, 3, 1), vec![0.2, 0.0, 0.0]);
         assert_eq!(c.preview_pos[0].load(Ordering::Relaxed), IDLE);
+        assert!(!c.preview_active(0));
         // The transport did not move.
         assert_eq!(c.current_position(), 0);
     }

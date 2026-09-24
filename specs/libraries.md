@@ -94,9 +94,10 @@ Not yet done: solo per track, envelope/note duration, stereo.
 ## Versioning
 
 Each library carries its own version in its `Cargo.toml` (not inherited from
-the workspace), bumped when its public API changes: `bm-playback` and
-`bm-render` are at 0.2.0 (previews, master volume, `render_pattern`); the
-rest are at 0.1.0. The GUI's *Tools > Libraries* window shows them.
+the workspace), bumped when its public API changes: `bm-playback` is at
+0.3.0 (master volume, previews and asking whether one is sounding),
+`bm-render` at 0.2.0 (`render_pattern`), `bm-project` at 0.2.0 (declared sample
+files) and the rest at 0.1.0. The GUI's *Tools > Libraries* window shows them.
 
 ## Licensing
 
