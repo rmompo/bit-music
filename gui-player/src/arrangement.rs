@@ -13,7 +13,7 @@ use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
 use crate::widgets::{IconButton, ICON_BUTTON_SIZE};
-use crate::view::{ListTab, Selection, ViewState};
+use crate::view::{Selection, ViewState};
 
 const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
 /// Pixels kept between the left edge of the grid and the cursor when the
@@ -151,7 +151,7 @@ pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Optio
                         .with_clip_rect(block.intersect(painter.clip_rect()))
                         .text(block.min + Vec2::new(4.0, 2.0), Align2::LEFT_TOP, label, FontId::proportional(11.0), Color32::WHITE);
 
-                    if matches!(&view.selection, Selection::Pattern(id) if *id == clip.pattern_id) {
+                    if view.selected_pattern.as_deref() == Some(clip.pattern_id.as_str()) {
                         painter.rect_stroke(block, 4.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
                     }
 
@@ -280,8 +280,7 @@ pub fn show(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, playhead: Optio
         view.scroll_to = follow_to;
     }
     if let Some(id) = clicked {
-        view.selection = Selection::Pattern(id);
-        view.tab = ListTab::Patterns;
+        view.select(Selection::Pattern(id));
     }
 }
 
@@ -303,7 +302,7 @@ mod tests {
             egui::__run_test_ui(|ui| show(ui, &l, &mut view, None, false));
         }
         view.muted[0] = true;
-        view.selection = Selection::Pattern("kickA".into());
+        view.select(Selection::Pattern("kickA".into()));
         // with a playback cursor inside, at the end, and past the end
         for t in [0.0, 1.3, 2.5, 6.0] {
             egui::__run_test_ui(|ui| show(ui, &l, &mut view, Some(t), true));

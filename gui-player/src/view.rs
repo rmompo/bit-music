@@ -10,7 +10,7 @@ use crate::grid::PatternGrid;
 use crate::loader::Loaded;
 use crate::palette;
 
-/// What the properties panel (C) shows.
+/// Something that can be selected in one of the lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Selection {
     #[default]
@@ -33,7 +33,10 @@ pub const DEFAULT_STEP_WIDTH: f32 = 16.0;
 pub const STEP_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 6.0..=48.0;
 
 pub struct ViewState {
-    pub selection: Selection,
+    /// The sample selected in the Samples tab.
+    pub selected_sample: Option<String>,
+    /// The pattern selected in the Patterns tab.
+    pub selected_pattern: Option<String>,
     pub tab: ListTab,
     /// One flag per track, in arrangement order.
     pub muted: Vec<bool>,
@@ -63,7 +66,8 @@ impl ViewState {
     pub fn new(l: &Loaded) -> Self {
         let c = &l.project.composition;
         Self {
-            selection: Selection::None,
+            selected_sample: None,
+            selected_pattern: None,
             tab: ListTab::default(),
             muted: vec![false; l.timeline.tracks.len()],
             step_width: DEFAULT_STEP_WIDTH,
@@ -84,6 +88,25 @@ impl ViewState {
                 .enumerate()
                 .map(|(i, s)| (s.id.clone(), palette::sample_color(i)))
                 .collect(),
+        }
+    }
+
+    /// Selects `selection` in its own tab and opens that tab (`None` clears
+    /// both). Each tab keeps its own selection.
+    pub fn select(&mut self, selection: Selection) {
+        match selection {
+            Selection::None => {
+                self.selected_sample = None;
+                self.selected_pattern = None;
+            }
+            Selection::Sample(id) => {
+                self.selected_sample = Some(id);
+                self.tab = ListTab::Samples;
+            }
+            Selection::Pattern(id) => {
+                self.selected_pattern = Some(id);
+                self.tab = ListTab::Patterns;
+            }
         }
     }
 

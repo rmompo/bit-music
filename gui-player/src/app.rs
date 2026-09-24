@@ -119,7 +119,7 @@ impl PlayerApp {
                 view.arrangement_height_percent =
                     (dividers.arrangement_height_percent as f32).clamp(c_lo, c_hi);
                 if let Some((selection, tab)) = screenshot::initial_selection() {
-                    view.selection = selection;
+                    view.select(selection);
                     view.tab = tab;
                 }
                 let transport = Transport::new(&loaded);

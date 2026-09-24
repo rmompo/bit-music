@@ -8,8 +8,8 @@ use crate::fmt;
 use crate::grid;
 use crate::loader::Loaded;
 use crate::transport::Transport;
-use crate::widgets::IconButton;
-use crate::view::{ListTab, Selection, ViewState};
+use crate::widgets::{IconButton, ICON_BUTTON_SIZE};
+use crate::view::{ListTab, ViewState};
 
 pub const OK_COLOR: Color32 = Color32::from_rgb(90, 190, 110);
 pub const ERR_COLOR: Color32 = Color32::from_rgb(230, 90, 90);
@@ -186,51 +186,95 @@ pub fn lists(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Tr
     });
 }
 
+/// Height of a list row: the play button plus a little padding.
+const LIST_ROW_HEIGHT: f32 = ICON_BUTTON_SIZE + 4.0;
+
+/// What happened to a list row this frame.
+#[derive(Default)]
+struct RowOutcome {
+    /// The row itself (anywhere but the play button) was clicked.
+    selected: bool,
+    /// The play button was clicked.
+    play: bool,
+}
+
+/// One row of a list, a single control: `[play] [color] name`. It takes the
+/// whole width, highlights as a whole when selected or hovered, and a click
+/// anywhere on it selects it, except on the play button, which only plays.
+fn list_row(
+    ui: &mut egui::Ui,
+    is_selected: bool,
+    play_enabled: bool,
+    play_tip: &str,
+    color: Color32,
+    name: RichText,
+) -> RowOutcome {
+    let (rect, row) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), LIST_ROW_HEIGHT),
+        Sense::click(),
+    );
+    let visuals = ui.visuals();
+    let fill = if is_selected {
+        visuals.selection.bg_fill
+    } else if row.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+
+    // The contents are laid out inside the row, on top of it, so the play
+    // button gets its own clicks.
+    let mut content = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(4.0, 2.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let play = content
+        .add_enabled(play_enabled, IconButton::new(regular::PLAY))
+        .on_hover_text(play_tip);
+    chip(&mut content, color);
+    content.add(egui::Label::new(name).selectable(false));
+
+    RowOutcome {
+        selected: row.clicked() && !play.clicked(),
+        play: play.clicked(),
+    }
+}
+
 fn sample_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
+    ui.spacing_mut().item_spacing.y = 2.0;
     for (sample, report) in l.project.composition.samples.iter().zip(&l.sample_reports) {
-        let selected = matches!(&view.selection, Selection::Sample(id) if *id == sample.id);
+        let selected = view.selected_sample.as_deref() == Some(sample.id.as_str());
         let color = view.sample_colors.get(&sample.id).copied().unwrap_or(Color32::GRAY);
-        ui.horizontal(|ui| {
-            let play = ui
-                .add_enabled(
-                    transport.can_preview_sample(&sample.id) && !transport.is_previewing_sample(&sample.id),
-                    IconButton::new(regular::PLAY),
-                )
-                .on_hover_text("Play the sample");
-            if play.clicked() {
-                transport.preview_sample(&sample.id);
-            }
-            chip(ui, color);
-            let mut text = RichText::new(&sample.id);
-            if report.outcome.is_err() {
-                text = text.color(ERR_COLOR);
-            }
-            if ui.selectable_label(selected, text).clicked() {
-                view.selection = Selection::Sample(sample.id.clone());
-            }
-        });
+        let mut name = RichText::new(&sample.id);
+        if report.outcome.is_err() {
+            name = name.color(ERR_COLOR);
+        }
+        let can_play = transport.can_preview_sample(&sample.id) && !transport.is_previewing_sample(&sample.id);
+        let row = list_row(ui, selected, can_play, "Play the sample", color, name);
+        if row.play {
+            transport.preview_sample(&sample.id);
+        }
+        if row.selected {
+            view.selected_sample = Some(sample.id.clone());
+        }
     }
 }
 
 fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
+    ui.spacing_mut().item_spacing.y = 2.0;
     for pattern in &l.project.composition.patterns {
-        let selected = matches!(&view.selection, Selection::Pattern(id) if *id == pattern.id);
+        let selected = view.selected_pattern.as_deref() == Some(pattern.id.as_str());
         let color = view.pattern_color(l, &pattern.id);
-        ui.horizontal(|ui| {
-            let play = ui
-                .add_enabled(
-                    transport.can_preview_pattern(&pattern.id) && !transport.is_previewing_pattern(&pattern.id),
-                    IconButton::new(regular::PLAY),
-                )
-                .on_hover_text("Play the pattern");
-            if play.clicked() {
-                transport.preview_pattern(&pattern.id);
-            }
-            chip(ui, color);
-            if ui.selectable_label(selected, &pattern.id).clicked() {
-                view.selection = Selection::Pattern(pattern.id.clone());
-            }
-        });
+        let can_play = transport.can_preview_pattern(&pattern.id) && !transport.is_previewing_pattern(&pattern.id);
+        let row = list_row(ui, selected, can_play, "Play the pattern", color, RichText::new(&pattern.id));
+        if row.play {
+            transport.preview_pattern(&pattern.id);
+        }
+        if row.selected {
+            view.selected_pattern = Some(pattern.id.clone());
+        }
     }
 }
 
@@ -241,27 +285,32 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
 /// for a pattern, its steps.
 pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
     ui.heading("Properties");
-    if view.tab == ListTab::Metadata {
-        scroll(ui, "metadata_properties", |ui| others_properties(ui, l));
-        return;
+    // Each tab shows the properties of its own selection.
+    match view.tab {
+        ListTab::Metadata => scroll(ui, "metadata_properties", |ui| others_properties(ui, l)),
+        ListTab::Samples => match view.selected_sample.as_deref() {
+            None => no_selection(ui),
+            Some(id) => two_columns(
+                ui,
+                "sample",
+                |ui| sample_properties(ui, l, id),
+                |ui| sample_used(ui, l, id),
+            ),
+        },
+        ListTab::Patterns => match view.selected_pattern.as_deref() {
+            None => no_selection(ui),
+            Some(id) => two_columns(
+                ui,
+                "pattern",
+                |ui| pattern_properties(ui, l, view, id),
+                |ui| pattern_used_and_steps(ui, l, view, id),
+            ),
+        },
     }
-    match &view.selection {
-        Selection::None => {
-            ui.label(RichText::new("Select a sample or a pattern to see its properties.").weak());
-        }
-        Selection::Sample(id) => two_columns(
-            ui,
-            "sample",
-            |ui| sample_properties(ui, l, id),
-            |ui| sample_used(ui, l, id),
-        ),
-        Selection::Pattern(id) => two_columns(
-            ui,
-            "pattern",
-            |ui| pattern_properties(ui, l, view, id),
-            |ui| pattern_used_and_steps(ui, l, view, id),
-        ),
-    }
+}
+
+fn no_selection(ui: &mut egui::Ui) {
+    ui.label(RichText::new("Select an element to see its properties.").weak());
 }
 
 /// Two equal columns (a fixed 50% / 50%), each with its own vertical scroll.
@@ -433,6 +482,7 @@ fn pattern_used_and_steps(ui: &mut egui::Ui, l: &Loaded, view: &ViewState, id: &
 mod tests {
     use super::*;
     use crate::loader::{load_blocking, LoadOutcome};
+    use crate::view::Selection;
     use std::path::Path;
 
     fn demo() -> Box<Loaded> {
@@ -441,6 +491,63 @@ mod tests {
             LoadOutcome::Loaded(l) => l,
             LoadOutcome::Failed { message, .. } => panic!("demo failed to load: {message}"),
         }
+    }
+
+    /// Runs two frames in a small window: one to lay out, one with a click
+    /// at `pos`. Returns what the row reported on the clicked frame.
+    fn click_row_at(pos: egui::Pos2) -> RowOutcome {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(400.0, 300.0));
+        let frame = |events: Vec<egui::Event>| {
+            let mut out = RowOutcome::default();
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                out = list_row(ui, false, true, "Play", Color32::RED, RichText::new("kick"));
+            });
+            // egui insists that texture updates are handled or cleared.
+            output.textures_delta.clear();
+            out
+        };
+        frame(vec![]);
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(vec![egui::Event::PointerMoved(pos)]);
+        frame(vec![button(true)]);
+        frame(vec![button(false)])
+    }
+
+    #[test]
+    fn clicking_a_row_selects_it_but_the_play_button_only_plays() {
+        // Blank space at the right of the name: selects the row.
+        let row = click_row_at(egui::pos2(300.0, 16.0));
+        assert!(row.selected && !row.play);
+        // The play button (first thing in the row): plays, does not select.
+        let play = click_row_at(egui::pos2(18.0, 16.0));
+        assert!(play.play && !play.selected);
+    }
+
+    #[test]
+    fn each_tab_has_its_own_selection() {
+        let l = demo();
+        let mut view = ViewState::new(&l);
+        assert!(view.selected_sample.is_none() && view.selected_pattern.is_none());
+        view.select(Selection::Sample("kick".into()));
+        assert_eq!(view.tab, ListTab::Samples);
+        view.select(Selection::Pattern("saxA".into()));
+        assert_eq!(view.tab, ListTab::Patterns);
+        // Both are remembered.
+        assert_eq!(view.selected_sample.as_deref(), Some("kick"));
+        assert_eq!(view.selected_pattern.as_deref(), Some("saxA"));
+        view.select(Selection::None);
+        assert!(view.selected_sample.is_none() && view.selected_pattern.is_none());
     }
 
     #[test]
@@ -465,7 +572,7 @@ mod tests {
             Selection::Pattern("saxA".into()),
             Selection::Pattern("kickA".into()),
         ] {
-            view.selection = selection;
+            view.select(selection);
             egui::__run_test_ui(|ui| top_row(ui, &l, &mut view, &t));
         }
         for tab in [ListTab::Metadata, ListTab::Samples, ListTab::Patterns] {

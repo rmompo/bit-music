@@ -101,6 +101,13 @@ fn parse_selection(text: &str) -> Option<(Selection, ListTab)> {
     match kind {
         "sample" => Some((Selection::Sample(id.to_string()), ListTab::Samples)),
         "pattern" => Some((Selection::Pattern(id.to_string()), ListTab::Patterns)),
+        // Just open a tab, with nothing selected.
+        "tab" => match id {
+            "metadata" => Some((Selection::None, ListTab::Metadata)),
+            "samples" => Some((Selection::None, ListTab::Samples)),
+            "patterns" => Some((Selection::None, ListTab::Patterns)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -119,6 +126,8 @@ mod tests {
             parse_selection("sample:kick"),
             Some((Selection::Sample("kick".into()), ListTab::Samples))
         );
+        assert_eq!(parse_selection("tab:patterns"), Some((Selection::None, ListTab::Patterns)));
+        assert_eq!(parse_selection("tab:nope"), None);
         assert_eq!(parse_selection("nonsense"), None);
         assert_eq!(parse_selection("track:a"), None);
     }
