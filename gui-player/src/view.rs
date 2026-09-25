@@ -48,11 +48,12 @@ pub struct ViewState {
     pub volume: f32,
     /// The last volume that was not 0: what un-muting goes back to.
     pub last_volume: f32,
-    /// Vertical divider: percentage of the top row's width taken by A.
-    pub tabs_width_percent: f32,
-    /// Horizontal divider: percentage of the height taken by C (the
-    /// arrangement); A + B get the rest.
-    pub arrangement_height_percent: f32,
+    /// Vertical divider: percentage of the window's width taken by C (the
+    /// tracks); A + B, the left column, get the rest.
+    pub tracks_width_percent: f32,
+    /// Horizontal divider: percentage of the left column's height taken by A
+    /// (the tabs); B (the properties) gets the rest.
+    pub tabs_height_percent: f32,
     /// How far each divider can be dragged (from the schema).
     pub divider_limits: DividerLimits,
     /// One-shot request to scroll the arrangement horizontally to this
@@ -76,8 +77,8 @@ impl ViewState {
             looping: false,
             volume: 1.0,
             last_volume: 1.0,
-            tabs_width_percent: 30.0,
-            arrangement_height_percent: 50.0,
+            tracks_width_percent: 75.0,
+            tabs_height_percent: 25.0,
             divider_limits: DividerLimits::default(),
             scroll_to: None,
             grids: c

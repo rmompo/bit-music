@@ -1,6 +1,6 @@
 {
   "title": "gui-player configuration",
-  "description": "Describes every entry of `settings` in gui-player.json (which lives next to the executable and is created with the defaults when missing). The file holds the current values as a list of {key, value}; this schema holds everything else about them. settingType USER entries are shown in Tools > Settings, built from controlType and values; SYSTEM entries are state the application keeps for itself (window, dividers). values.defaultValue is used when an entry is missing or invalid and by 'Restore default'; it may be absent for SYSTEM entries with no meaningful default. Also in the file, outside `settings`: `lastOpened`, the history of opened compositions (most recent first, absolute paths as {key, value}).",
+  "description": "Describes every entry of `settings` in gui-player.json (which lives next to the executable and is created with the defaults when missing). The file holds the current values as a list of {key, value}; this schema holds everything else about them. settingType USER entries are shown in Tools > Settings, built from controlType and values; SYSTEM entries are state the application keeps for itself (window, dividers). values.minPoints (dividers only) is a floor in points that is never broken, whatever the percentages of minValue and maxValue say. values.defaultValue is used when an entry is missing or invalid and by 'Restore default'; it may be absent for SYSTEM entries with no meaningful default. Also in the file, outside `settings`: `lastOpened`, the history of opened compositions (most recent first, absolute paths as {key, value}).",
   "settings": {
     "lang": {
       "settingType": "USER",
@@ -61,19 +61,19 @@
       "dataType": "integer",
       "values": { "minValue": 150, "defaultValue": 720 }
     },
-    "tabsWidthPercent": {
+    "tracksWidthPercent": {
       "settingType": "SYSTEM",
-      "settingTitle": "Tabs panel width",
-      "settingDescription": "Share of the width of A + B taken by the tabs panel (A). Position of the vertical divider; minValue and maxValue are how far it can be dragged.",
+      "settingTitle": "Tracks panel width",
+      "settingDescription": "Share of the window's width taken by the tracks (C); the tabs and properties column (A + B) gets the rest. Position of the vertical divider. minValue and maxValue are how far it can be dragged, in percent; minPoints is the least either side may have, in points, and it always wins over the percentages.",
       "dataType": "integer",
-      "values": { "minValue": 30, "maxValue": 50, "defaultValue": 30 }
+      "values": { "minValue": 50, "maxValue": 75, "minPoints": 120, "defaultValue": 75 }
     },
-    "arrangementHeightPercent": {
+    "tabsHeightPercent": {
       "settingType": "SYSTEM",
-      "settingTitle": "Arrangement height",
-      "settingDescription": "Share of the height taken by the arrangement (C); A + B get the rest. Position of the horizontal divider; minValue and maxValue are how far it can be dragged.",
+      "settingTitle": "Tabs panel height",
+      "settingDescription": "Share of the height of the left column taken by the tabs (A); the properties (B) get the rest. Position of the horizontal divider. minValue and maxValue are how far it can be dragged, in percent; minPoints is the least either side may have, in points, and it always wins over the percentages.",
       "dataType": "integer",
-      "values": { "minValue": 50, "maxValue": 75, "defaultValue": 50 }
+      "values": { "minValue": 25, "maxValue": 50, "minPoints": 120, "defaultValue": 25 }
     }
   }
 }

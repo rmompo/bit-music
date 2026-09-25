@@ -25,8 +25,10 @@ pub const WINDOW_X: &str = "windowX";
 pub const WINDOW_Y: &str = "windowY";
 pub const WINDOW_WIDTH: &str = "windowWidth";
 pub const WINDOW_HEIGHT: &str = "windowHeight";
-pub const TABS_WIDTH_PERCENT: &str = "tabsWidthPercent";
-pub const ARRANGEMENT_HEIGHT_PERCENT: &str = "arrangementHeightPercent";
+pub const TRACKS_WIDTH_PERCENT: &str = "tracksWidthPercent";
+pub const TABS_HEIGHT_PERCENT: &str = "tabsHeightPercent";
+/// Settings of older layouts, dropped from the file when it is read.
+const OBSOLETE_SETTINGS: [&str; 2] = ["tabsWidthPercent", "arrangementHeightPercent"];
 
 // ----- schema ------------------------------------------------------------
 
@@ -75,6 +77,7 @@ struct RawDefinition {
 struct RawValues {
     min_value: Option<i64>,
     max_value: Option<i64>,
+    min_points: Option<i64>,
     enum_value: Option<Vec<Value>>,
     default_value: Option<Value>,
 }
@@ -95,6 +98,8 @@ pub struct SettingDef {
     pub control_type: Option<ControlType>,
     pub min: Option<i64>,
     pub max: Option<i64>,
+    /// A floor in points for dividers, never broken whatever the percentages.
+    pub min_points: Option<i64>,
     /// The allowed values when the setting is a choice (empty otherwise).
     pub choices: Vec<Value>,
     /// `None` for entries without a meaningful default.
@@ -148,6 +153,7 @@ pub fn definitions() -> &'static [SettingDef] {
                 control_type: d.control_type,
                 min: d.values.min_value,
                 max: d.values.max_value,
+                min_points: d.values.min_points,
                 choices: d.values.enum_value.unwrap_or_default(),
                 default: d.values.default_value,
             })
@@ -176,25 +182,41 @@ pub struct WindowState {
     pub height: i32,
 }
 
-/// Where the dividers were left, as percentages: A's share of the width of
-/// A + B, and C's share of the height.
+/// Where the dividers were left, as percentages: C's share of the window's
+/// width (A + B get the rest), and A's share of the height of the left
+/// column (B gets the rest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DividerState {
-    pub tabs_width_percent: i32,
-    pub arrangement_height_percent: i32,
+    pub tracks_width_percent: i32,
+    pub tabs_height_percent: i32,
 }
 
-/// How far the dividers can be dragged (the limits of their schema
-/// entries), in percent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How far a divider can be dragged. Two floors apply at once: no less than
+/// `min` percent and no less than `min_points` points; the points are never
+/// broken, whatever the percentages say.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DividerLimit {
+    pub min: f32,
+    pub max: f32,
+    pub min_points: f32,
+}
+
+/// The limits of both dividers (from their schema entries).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DividerLimits {
-    pub tabs_width: (i32, i32),
-    pub arrangement_height: (i32, i32),
+    /// The vertical divider: C's share of the width.
+    pub tracks_width: DividerLimit,
+    /// The horizontal divider: A's share of the left column's height.
+    pub tabs_height: DividerLimit,
 }
 
-fn limits_of(key: &str) -> (i32, i32) {
+fn limit_of(key: &str) -> DividerLimit {
     let def = definition(key).expect("divider settings are in the schema");
-    (def.min.unwrap_or(10) as i32, def.max.unwrap_or(90) as i32)
+    DividerLimit {
+        min: def.min.unwrap_or(10) as f32,
+        max: def.max.unwrap_or(90) as f32,
+        min_points: def.min_points.unwrap_or(0) as f32,
+    }
 }
 
 fn default_int(key: &str) -> i32 {
@@ -207,29 +229,17 @@ fn default_int(key: &str) -> i32 {
 impl Default for DividerLimits {
     fn default() -> Self {
         Self {
-            tabs_width: limits_of(TABS_WIDTH_PERCENT),
-            arrangement_height: limits_of(ARRANGEMENT_HEIGHT_PERCENT),
+            tracks_width: limit_of(TRACKS_WIDTH_PERCENT),
+            tabs_height: limit_of(TABS_HEIGHT_PERCENT),
         }
-    }
-}
-
-impl DividerLimits {
-    /// Allowed range for A's width share, as `(min, max)`.
-    pub fn tabs_width_range(&self) -> (f32, f32) {
-        (self.tabs_width.0 as f32, self.tabs_width.1 as f32)
-    }
-
-    /// Allowed range for C's height share, as `(min, max)`.
-    pub fn arrangement_height_range(&self) -> (f32, f32) {
-        (self.arrangement_height.0 as f32, self.arrangement_height.1 as f32)
     }
 }
 
 impl Default for DividerState {
     fn default() -> Self {
         Self {
-            tabs_width_percent: default_int(TABS_WIDTH_PERCENT),
-            arrangement_height_percent: default_int(ARRANGEMENT_HEIGHT_PERCENT),
+            tracks_width_percent: default_int(TRACKS_WIDTH_PERCENT),
+            tabs_height_percent: default_int(TABS_HEIGHT_PERCENT),
         }
     }
 }
@@ -297,6 +307,7 @@ impl Config {
     /// there is none), and missing ones are added with their default.
     /// Settings the schema does not know are kept.
     pub fn with_defaults(mut self) -> Self {
+        self.settings.retain(|s| !OBSOLETE_SETTINGS.contains(&s.key.as_str()));
         for def in definitions() {
             let position = self.settings.iter().position(|s| s.key == def.key);
             match (position, &def.default) {
@@ -424,16 +435,14 @@ impl Config {
     pub fn dividers(&self) -> DividerState {
         let d = DividerState::default();
         DividerState {
-            tabs_width_percent: self.int(TABS_WIDTH_PERCENT).map_or(d.tabs_width_percent, |v| v as i32),
-            arrangement_height_percent: self
-                .int(ARRANGEMENT_HEIGHT_PERCENT)
-                .map_or(d.arrangement_height_percent, |v| v as i32),
+            tracks_width_percent: self.int(TRACKS_WIDTH_PERCENT).map_or(d.tracks_width_percent, |v| v as i32),
+            tabs_height_percent: self.int(TABS_HEIGHT_PERCENT).map_or(d.tabs_height_percent, |v| v as i32),
         }
     }
 
     pub fn set_dividers(&mut self, d: &DividerState) {
-        self.set(TABS_WIDTH_PERCENT, Value::from(d.tabs_width_percent));
-        self.set(ARRANGEMENT_HEIGHT_PERCENT, Value::from(d.arrangement_height_percent));
+        self.set(TRACKS_WIDTH_PERCENT, Value::from(d.tracks_width_percent));
+        self.set(TABS_HEIGHT_PERCENT, Value::from(d.tabs_height_percent));
     }
 
     /// The maximum size of the history.
@@ -574,18 +583,32 @@ mod tests {
     #[test]
     fn dividers_default_and_are_limited_by_their_schema_entries() {
         let mut config = defaults();
-        assert_eq!(config.dividers(), DividerState { tabs_width_percent: 30, arrangement_height_percent: 50 });
+        assert_eq!(config.dividers(), DividerState { tracks_width_percent: 75, tabs_height_percent: 25 });
         let limits = DividerLimits::default();
-        assert_eq!(limits.tabs_width_range(), (30.0, 50.0));
-        assert_eq!(limits.arrangement_height_range(), (50.0, 75.0));
+        // C: 50% to 75% of the width (so A + B: 25% to 50%); A: 25% to 50% of
+        // the column (so B: 50% to 75%). Never less than 120 points either way.
+        assert_eq!(limits.tracks_width, DividerLimit { min: 50.0, max: 75.0, min_points: 120.0 });
+        assert_eq!(limits.tabs_height, DividerLimit { min: 25.0, max: 50.0, min_points: 120.0 });
 
-        let moved = DividerState { tabs_width_percent: 45, arrangement_height_percent: 62 };
+        let moved = DividerState { tracks_width_percent: 60, tabs_height_percent: 40 };
         config.set_dividers(&moved);
         assert_eq!(config.clone().with_defaults().dividers(), moved);
         // Outside the limits: back to the default.
-        config.set(TABS_WIDTH_PERCENT, Value::from(60));
-        config.set(ARRANGEMENT_HEIGHT_PERCENT, Value::from(20));
+        config.set(TRACKS_WIDTH_PERCENT, Value::from(90));
+        config.set(TABS_HEIGHT_PERCENT, Value::from(10));
         assert_eq!(config.with_defaults().dividers(), DividerState::default());
+    }
+
+    #[test]
+    fn the_settings_of_the_old_layout_are_dropped() {
+        let config: Config = serde_json::from_str(
+            r#"{"settings":[{"key":"tabsWidthPercent","value":40},{"key":"arrangementHeightPercent","value":60},{"key":"other","value":"x"}]}"#,
+        )
+        .unwrap();
+        let config = config.with_defaults();
+        assert_eq!(config.value("tabsWidthPercent"), None);
+        assert_eq!(config.value("arrangementHeightPercent"), None);
+        assert_eq!(config.value("other"), Some(Value::from("x")));
     }
 
     #[test]
@@ -646,8 +669,8 @@ mod tests {
         assert_eq!(edited.max_last_opened(), 10);
         // System state is not touched by "reset all".
         let mut moved = defaults();
-        moved.set(TABS_WIDTH_PERCENT, Value::from(45));
+        moved.set(TRACKS_WIDTH_PERCENT, Value::from(60));
         moved.reset_user_settings();
-        assert_eq!(moved.int(TABS_WIDTH_PERCENT), Some(45));
+        assert_eq!(moved.int(TRACKS_WIDTH_PERCENT), Some(60));
     }
 }

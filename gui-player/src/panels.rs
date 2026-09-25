@@ -19,86 +19,6 @@ pub const ERR_COLOR: Color32 = Color32::from_rgb(230, 90, 90);
 /// in one panel line their values up.
 pub const MIN_KEY_WIDTH: f32 = 130.0;
 
-/// Smallest size of either side of a divider, in points.
-const MIN_PANEL_SIZE: f32 = 120.0;
-/// Keeps a divider position within `(min, max)` (the limits of its schema
-/// entry) and leaves at least [`MIN_PANEL_SIZE`] points on each side of
-/// `total`.
-pub fn clamp_percent(percent: f32, total: f32, (min, max): (f32, f32)) -> f32 {
-    let min_by_size = (MIN_PANEL_SIZE / total.max(1.0) * 100.0).min(50.0);
-    let lo = min.max(min_by_size);
-    let hi = max.min(100.0 - min_by_size);
-    percent.clamp(lo, hi.max(lo))
-}
-
-/// Direction of a divider line.
-#[derive(Clone, Copy)]
-pub enum Axis {
-    /// A vertical line, dragged left / right.
-    Vertical,
-    /// A horizontal line, dragged up / down.
-    Horizontal,
-}
-
-/// A draggable divider line starting at `start` and `length` long. Returns
-/// how far it was dragged this frame (in points, along its normal).
-pub fn splitter(ui: &mut egui::Ui, id: &str, start: egui::Pos2, length: f32, axis: Axis) -> f32 {
-    const GRAB: f32 = 6.0;
-    let (rect, line) = match axis {
-        Axis::Vertical => (
-            egui::Rect::from_min_size(start - Vec2::new(GRAB / 2.0, 0.0), Vec2::new(GRAB, length)),
-            [start, start + Vec2::new(0.0, length)],
-        ),
-        Axis::Horizontal => (
-            egui::Rect::from_min_size(start - Vec2::new(0.0, GRAB / 2.0), Vec2::new(length, GRAB)),
-            [start, start + Vec2::new(length, 0.0)],
-        ),
-    };
-    let response = ui.interact(rect, ui.id().with(id), Sense::drag());
-    let cursor = match axis {
-        Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
-        Axis::Horizontal => egui::CursorIcon::ResizeVertical,
-    };
-    if response.hovered() || response.dragged() {
-        ui.ctx().set_cursor_icon(cursor);
-    }
-    let visuals = ui.visuals();
-    let stroke = if response.dragged() {
-        visuals.widgets.active.fg_stroke
-    } else if response.hovered() {
-        visuals.widgets.hovered.fg_stroke
-    } else {
-        visuals.widgets.noninteractive.bg_stroke
-    };
-    ui.painter().line_segment(line, stroke);
-    match axis {
-        Axis::Vertical => response.drag_delta().x,
-        Axis::Horizontal => response.drag_delta().y,
-    }
-}
-
-/// A | B: the tabs and the properties, each with its own vertical scroll,
-/// with a draggable separator between them. Its position is
-/// `view.tabs_width_percent` (30% by default) and follows the user's drag.
-pub fn top_row(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &Transport) {
-    let total = ui.available_width();
-    // The size always comes from the stored percentage, so it is applied on
-    // every start and follows the window when it is resized.
-    let tabs = egui::Panel::left("tabs_panel")
-        .resizable(false)
-        .exact_size(total * view.tabs_width_percent / 100.0)
-        .show(ui, |ui| lists(ui, l, view, transport));
-    let edge = tabs.response.rect;
-    let delta = splitter(ui, "tabs_splitter", edge.right_top(), edge.height(), Axis::Vertical);
-    if total > 0.0 {
-        let range = view.divider_limits.tabs_width_range();
-        view.tabs_width_percent = clamp_percent(view.tabs_width_percent + delta / total * 100.0, total, range);
-    }
-    egui::CentralPanel::default().show(ui, |ui| {
-        properties(ui, l, view);
-    });
-}
-
 fn scroll(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::ScrollArea::vertical()
         .id_salt(id)
@@ -288,51 +208,37 @@ fn pattern_list(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: 
 }
 
 /// Area B: Properties. With the Metadata tab open it shows the metadata's
-/// `others`; otherwise the detail of the selected sample or pattern, in two
-/// equal columns: on the left all the properties (first what is stored in the
-/// `.bm1`, then what is calculated); on the right only where it is used and,
-/// for a pattern, its steps.
+/// `others`; otherwise the detail of the selected sample or pattern, in a
+/// single column.
 pub fn properties(ui: &mut egui::Ui, l: &Loaded, view: &ViewState) {
     ui.heading(t("props.heading"));
-    // Each tab shows the properties of its own selection.
+    // Each tab shows the properties of its own selection, in one column with
+    // its own vertical scroll: first the properties of the element (what is
+    // stored in the `.bm1`, then what is calculated), then where it is used
+    // and, for a pattern, its steps.
     match view.tab {
         ListTab::Metadata => scroll(ui, "metadata_properties", |ui| others_properties(ui, l)),
         ListTab::Samples => match view.selected_sample.as_deref() {
             None => no_selection(ui),
-            Some(id) => two_columns(
-                ui,
-                "sample",
-                |ui| sample_properties(ui, l, id),
-                |ui| sample_used(ui, l, id),
-            ),
+            Some(id) => scroll(ui, "sample_properties_scroll", |ui| {
+                sample_properties(ui, l, id);
+                ui.add_space(12.0);
+                sample_used(ui, l, id);
+            }),
         },
         ListTab::Patterns => match view.selected_pattern.as_deref() {
             None => no_selection(ui),
-            Some(id) => two_columns(
-                ui,
-                "pattern",
-                |ui| pattern_properties(ui, l, view, id),
-                |ui| pattern_used_and_steps(ui, l, view, id),
-            ),
+            Some(id) => scroll(ui, "pattern_properties_scroll", |ui| {
+                pattern_properties(ui, l, view, id);
+                ui.add_space(12.0);
+                pattern_used_and_steps(ui, l, view, id);
+            }),
         },
     }
 }
 
 fn no_selection(ui: &mut egui::Ui) {
     ui.label(RichText::new(t("props.no_selection")).weak());
-}
-
-/// Two equal columns (a fixed 50% / 50%), each with its own vertical scroll.
-fn two_columns(
-    ui: &mut egui::Ui,
-    id: &str,
-    left: impl FnOnce(&mut egui::Ui),
-    right: impl FnOnce(&mut egui::Ui),
-) {
-    ui.columns(2, |cols| {
-        scroll(&mut cols[0], &format!("{id}_stored_scroll"), left);
-        scroll(&mut cols[1], &format!("{id}_calculated_scroll"), right);
-    });
 }
 
 fn find_sample<'a>(
@@ -567,18 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn divider_percentages_stay_in_range_and_leave_room_on_both_sides() {
-        let wide = (10.0, 90.0);
-        assert_eq!(clamp_percent(5.0, 1000.0, wide), 12.0); // 120 pt minimum wins over 10 %
-        assert_eq!(clamp_percent(50.0, 1000.0, wide), 50.0);
-        assert_eq!(clamp_percent(99.0, 1000.0, wide), 88.0);
-        // The limits of the setting narrow it further.
-        assert_eq!(clamp_percent(10.0, 1000.0, (30.0, 50.0)), 30.0);
-        assert_eq!(clamp_percent(80.0, 1000.0, (30.0, 50.0)), 50.0);
-    }
-
-    #[test]
-    fn top_row_draws_for_every_kind_of_selection() {
+    fn the_tabs_and_the_properties_draw_for_every_kind_of_selection() {
         let l = demo();
         let mut view = ViewState::new(&l);
         let t = Transport::new(&l);
@@ -589,11 +484,17 @@ mod tests {
             Selection::Pattern("kickA".into()),
         ] {
             view.select(selection);
-            egui::__run_test_ui(|ui| top_row(ui, &l, &mut view, &t));
+            egui::__run_test_ui(|ui| {
+                lists(ui, &l, &mut view, &t);
+                properties(ui, &l, &view);
+            });
         }
         for tab in [ListTab::Metadata, ListTab::Samples, ListTab::Patterns] {
             view.tab = tab;
-            egui::__run_test_ui(|ui| top_row(ui, &l, &mut view, &t));
+            egui::__run_test_ui(|ui| {
+                lists(ui, &l, &mut view, &t);
+                properties(ui, &l, &view);
+            });
         }
     }
 }

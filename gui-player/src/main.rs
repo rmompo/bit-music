@@ -8,6 +8,7 @@ mod config;
 mod dialogs;
 mod errors;
 mod i18n;
+mod layout;
 mod fatal;
 mod fmt;
 mod grid;

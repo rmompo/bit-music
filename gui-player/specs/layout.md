@@ -15,7 +15,7 @@ libraries it builds on are implemented (see `../../specs/libraries.md`).
 - **Done:**
   - Window with menu bar (`File > Open`, `Quit`); opening a `.bm1` by dialog, drag and drop, or as the first command-line argument; loading on a background thread; status bar; empty, loading and failed screens. A composition whose samples are missing still opens (with warnings and no audio).
   - **A** tabs *Metadata* (the default) / *Samples* / *Patterns*. The two lists have one control per row (`[play] [color] name`): clicking anywhere on the row selects it, the play button only plays, and each tab keeps its own selection. Each sample has a **play button** that sounds it once at its original pitch, and each pattern one that plays it once from its start (with its sample, notes and the composition's tempo); both sound on top of the transport, which is not touched. An element's play button stays disabled while its own preview is sounding, so plays cannot pile up.
-  - **B** properties of the selected sample or pattern, in **two equal columns** (a fixed 50% / 50%), each with its own vertical scroll. The left one has all the properties: first what is stored in the `.bm1` (a sample's id, root note and file exactly as written; a pattern's id and sample, without its steps), then what is calculated (a sample's status, length, frames and sample rate; a pattern's step count, beats, sounding steps and distinct pitches). The right one only says where it is used (*Used by patterns* / *Used in tracks*) and, for a pattern, shows the **step grid** (piano-roll style like a DAW's: every semitone from the start of the lowest octave the pattern uses to the end of the highest one, highest on top, with a keyboard on the left (white keys light, black keys dark and shorter, each with its name such as `C#4`), the rows of the white keys a little lighter than those of the black ones, one column per step, beats shaded and numbered. The small preview inside an arrangement block uses the same full scale (highest pitch on top), and **every note mark has the same height** (4 points per semitone) whatever the pattern: the track rows are made as tall as the widest range of pitches among the patterns on the tracks needs (52 points at least, 240 at most; only past that are all the marks made thinner, still alike), and a shorter range is centered in its block; it scrolls horizontally on its own). With the *Metadata* tab open, B shows the metadata's `others` instead.
+  - **B** properties of the selected sample or pattern, in **a single column** with its own vertical scroll: first what is stored in the `.bm1` (a sample's id, root note and file exactly as written; a pattern's id and sample, without its steps), then what is calculated (a sample's status, length, frames and sample rate; a pattern's step count, beats, sounding steps and distinct pitches), then where it is used (*Used by patterns* / *Used in tracks*) and, for a pattern, last, the **step grid** (piano-roll style like a DAW's: every semitone from the start of the lowest octave the pattern uses to the end of the highest one, highest on top, with a keyboard on the left (white keys light, black keys dark and shorter, each with its name such as `C#4`), the rows of the white keys a little lighter than those of the black ones, one column per step, beats shaded and numbered. The small preview inside an arrangement block uses the same full scale (highest pitch on top), and **every note mark has the same height** (4 points per semitone) whatever the pattern: the track rows are made as tall as the widest range of pitches among the patterns on the tracks needs (52 points at least, 240 at most; only past that are all the marks made thinner, still alike), and a shorter range is centered in its block; it scrolls horizontally on its own). With the *Metadata* tab open, B shows the metadata's `others` instead.
   - **C** arrangement: one row per track with a **mute icon button** (speaker / crossed-out speaker) and name, and a step grid where every pattern is a filled block colored by its sample with its notes drawn inside, loop repetitions dimmed, column shading, beat lines, a pinned ruler (column numbers and start times) and pinned track column, shared 2D scroll, zoom slider, and click-to-select a block (which selects the pattern in A and B). Selecting a pattern highlights its blocks.
   - **Transport ribbon**, directly under the arrangement: one **play/pause toggle** (it shows what a click will do, and goes back to *play* by itself on stop or at the end), stop, loop (icons with tooltips), `elapsed / total` and a position slider (dragging seeks). Space toggles play/pause. It drives the `bm-playback` engine; the mute buttons and Loop are pushed to the engine every frame. A red **playback cursor** (line plus a marker on the ruler) crosses the arrangement, and the view scrolls to keep it visible while playing. Without an audio device (or without audio because samples are missing) the controls are disabled and the reason is shown; the app still works as a viewer.
   - **Status bar** (the footer), left to right: file, integrity and sample count; then, after a separator that is always there and in all the space left, a red `bug` icon that opens the errors window and, at its right, the **latest error** (red, cut with "…" if it does not fit, full text on hover) — both only while there are errors; then, on the right, the **master volume** (a mute button, then the slider; it affects the transport and the sample previews) and the arrangement **zoom** slider. The mute button shows a speaker, or a crossed-out one while muted; muting sets the volume to 0 and remembers the previous volume, clicking again goes back to it, and dragging the slider above 0 un-mutes too (muted simply means a volume of 0).
@@ -26,7 +26,7 @@ libraries it builds on are implemented (see `../../specs/libraries.md`).
   - `values`: `minValue`, `maxValue`, `enumValue` (the choices of a combo) and `defaultValue` (mandatory for `USER`; absent for `windowX`/`windowY`, which have no meaningful default).
   A test checks the schema's coherence. Missing or invalid values (out of limits, wrong type) are reset to their default, or dropped when there is none; text such as `"10"` from older files is accepted; unknown settings are kept. A corrupt file is reported on stderr and left untouched (defaults are used in memory).
 - **Tools > Settings** is generated from the schema (one row per `USER` setting: title, description, the control, and a *Restore default* button). It edits a copy: **OK** applies and saves it, **Cancel**, Esc or a click outside discards it, and **Reset all to defaults** puts every `USER` setting back to its default (in the copy, until OK). A *Clear history* button empties `lastOpened`. The `USER` settings are: `lang` (combo: `ENGLISH` by default, or `SPANISH`; applied as soon as you press OK), `maxLastOpened` (combo: 5, 10, 15 or 20; default 10) and `path` (text: the folder file dialogs, *Open* and *Export*, start in; default `C:\LocalFiles\proyectos\personal\bit-music\demos\songs\`, ignored if it is not an existing folder).
-- **Dividers**: the vertical one between A and B and the horizontal one between A + B and C can be dragged; they are drawn by the app itself and sized from the stored percentage, not from egui's remembered panel sizes. Each side keeps at least 120 points. Positions are the `SYSTEM` settings `tabsWidthPercent` (A's share of the width of A + B; 30% by default, limited to 30%–50%) and `arrangementHeightPercent` (C's share of the height; 50% by default, limited to 50%–75%). The limits are the `minValue`/`maxValue` of those schema entries.
+- **Dividers**: `y` (between the left column and C) and `x` (between A and B) can be dragged; they are drawn by the app itself (`layout.rs`) and sized from the stored percentage, not from egui's remembered panel sizes. The positions are the `SYSTEM` settings `tracksWidthPercent` (C's share of the window's width; 75% by default, 50% to 75%) and `tabsHeightPercent` (A's share of the left column's height; 25% by default, 25% to 50%). Their `minValue`/`maxValue` are the percentage limits, and `minPoints` (120) is a floor in points that is **never broken** on either side (it beats the percentages in a small window). The settings of the old layout (`tabsWidthPercent`, `arrangementHeightPercent`) are dropped from an existing file.
 - **Window state**: the settings `windowMaximized` (default `true`), `windowX`/`windowY` (optional), `windowWidth` and `windowHeight` record how the window was left, and it opens that way. While maximized only the flag changes, so restoring returns to the last restored geometry. Changes are written about 0.6 s after the last one. Where the system does not report a window position (Wayland), no position is stored and the system places the window.
 - **Live oscilloscope**: while a sample or pattern preview sounds, its list row shows the audio being played as a faint trace across the whole row, behind the contents; while the transport plays, each track's cell in the pinned TRACK column shows that track's audio across the whole column, behind the mute button and the name (nothing for a muted track, or when stopped or paused). Both are the window of audio (about 120 ms) around the current position, read from the audio already in memory (`bm-playback`'s `track_scope` and `preview_scope`); they follow the master volume, and the audio thread is not involved.
 - **Languages (i18n)**: every text of the interface is looked up by key in `gui-player/i18n/en.json` or `es.json` (flat JSON, embedded in the executable; `{name}` placeholders; a missing key falls back to English, then to the key). The language is the `lang` setting and changes live. Texts of the `USER` settings are `setting.<key>.title` / `.description`, and the words of a combo are `value.<key>.<choice>` (each language name is written in its own language). Tests check that both files have the same keys and placeholders, that every key used in the sources exists, and that every user setting is translated. Not translated: the product name, messages that come from libraries (audio device errors, format validation), and startup errors (shown before the configuration is read).
@@ -60,40 +60,40 @@ Observation: under WSLg the Wayland connection failed about every second launch 
 ## Layout
 
 ```
-+----------------------------------------------------------------------+
-| File:  Open...   Quit                                                |   menu bar
-+---------------------------------------+------------------------------+
-| A [Metadata][Samples][Patterns]       | B Properties                 |   top panel
-|   metadata, or a list of names        |   detail of the item         |   (resizable)
-|   ([>] plays each sample) (scroll V)  |   selected in A or C         |
-|                                       |   (scroll V)                 |
-+-----+----------------------------------------------------------------+
-| Tracks  ruler:  1 00:00.0 | 2 00:01.5 | ...                          |
-| [)] | kick   [kickA     ][kickA     ]                                |   C Arrangement
-| [)] | snare  [snareA    ][snareA    ]                                |   (scroll V/H
-| [/] | hihat  [hihatA    ][hihatA    ]                                |    shared)
-| [)] | epiano [epianoA   ][epianoA (loop)]                            |
-| [)] | sax    [saxA       ]                                           |
-+----------------------------------------------------------------------+
-| [>/||] [#] [@]   00:03.2 / 00:04.2   |=====o----------------------|   transport
-+----------------------------------------------------------------------+
-| song1.bm1 | integrity OK | 5/5 samples | [bug] no audio: could not get the def… | Vol [--o--] | Zoom [--o--] |   status bar
-+----------------------------------------------------------------------+
++----------------------------------------------------------------------------+
+| File   Tools   Help                                                        |   menu bar
++--------------------------+-------------------------------------------------+
+| A [Metadata][Samples]    |                                                 |
+|   [Patterns]             |                                                 |
+|   metadata, or a list    |                                                 |
+|   ([>] plays each row)   y   C  tracks                                     |
+|   (scroll V)             y   [)] kick   [kickA     ][kickA     ]           |
++-------------x------------y   [)] snare  [snareA    ][snareA    ]           |
+| B Properties             |   [/] hihat  [hihatA    ][hihatA    ]           |
+|   one column             |   [)] epiano [epianoA   ][epianoA (loop)]       |
+|   (scroll V)             |   [)] sax    [saxA       ]                      |
+|                          +-------------------------------------------------+
+|                          | [>/||] [#] [@]   00:03.2 / 00:04.2  |===o------| |   transport
++--------------------------+-------------------------------------------------+
+| song1.bm1 | integrity OK | 5/5 samples | [bug] error… | Vol [--o--] | Zoom  |   status bar
++----------------------------------------------------------------------------+
 ```
+
+`y` is the vertical divider (between the left column, A + B, and C) and `x` the horizontal one (between A and B); both are dragged with the mouse. **C** takes 75% of the window's width by default, A + B the other 25%; **A** takes 25% of the left column's height, B the other 75%. The transport sits under C only, and the footer and the menu bar run the full width. Each divider is limited by **two floors at once**: no less than a percentage and no less than a number of points, on each side. The percentages are C 50% to 75% of the width (A + B 25% to 50%) and A 25% to 50% of the height (B 50% to 75%); the floor in points is 120, and **it is never broken**: it wins over the percentages when a small window cannot honour both (and if the room cannot hold two floors, it is split evenly). The positions are stored as percentages, so they follow the window when it is resized.
 
 The arrangement has no title of its own (its corner just says "Tracks"). Legend: `[>/||]` play/pause toggle, `[#]` stop, `[@]` loop, `[)]` mute (speaker icon; `[/]` = crossed out, muted). The zoom slider lives at the right of the status bar, with the master volume to its left.
 
 ## Areas
 
-- **Menu bar**: `File` with *Open*, *Open recent* and *Quit* (*Export WAV…* is planned).
+- **Menu bar**: `File` (*Open*, *Open recent*, *Quit*), `Tools` (*Export > WAV*, *Settings*) and `Help` (*Libraries*, *About*); see *Menus* below.
 - **A, tabs**: *Metadata* (default): title, format version, bpm, steps per beat, seconds per step and length (the `others` key/value pairs are shown in B while this tab is open). *Samples* and *Patterns*: lists whose rows are single controls, `[play] [color] name`: a click anywhere on the row selects it (and highlights all of it), except on the play button, which only plays. A sample whose file is missing is shown in red. **Each tab has its own selection**, kept when switching tabs; opening a tab loads Properties for that tab's selection, or *Select an element to see its properties.* when there is none. Vertical scroll.
-- **B, properties**: with the *Metadata* tab open, the metadata's `others`; otherwise the detail of what is selected in the open tab (a click on a block in C selects that pattern in the Patterns tab and opens it), in two equal columns (a fixed 50% / 50%), each with its own vertical scroll. The left one has all the properties (first what is stored in the `.bm1`, then what is calculated); the right one only where it is used and, for a pattern, its steps.
-  - A **sample**: left, its id, root note and file as stored, then its status, length, frames and sample rate; right, *Used by patterns*.
-  - A **pattern**: left, its id and sample, then its steps, beats, sounding steps and distinct pitches; right, *Used in tracks* (noting repetitions that come from looping) and below it the **step grid** with its own scroll.
+- **B, properties**: with the *Metadata* tab open, the metadata's `others`; otherwise the detail of what is selected in the open tab (a click on a block in C selects that pattern in the Patterns tab and opens it), in a **single column** with its own vertical scroll.
+  - A **sample**: its id, root note and file as stored, then its status, length, frames and sample rate, then *Used by patterns*.
+  - A **pattern**: its id and sample, then its steps, beats, sounding steps and distinct pitches, then *Used in tracks* (noting repetitions that come from looping) and, last, the **step grid** (which scrolls horizontally on its own).
 - **C, arrangement**: one row per track inside a single shared 2D scroll area (vertical and horizontal), so all tracks scroll together, with no title of its own.
   - **Track row** = mute icon + render. The icon is the mute toggle and stays pinned while the render scrolls horizontally. The render shows the track's patterns as blocks.
   - The column **ruler** stays pinned at the top.
-- **Transport**, directly below the arrangement: play/pause toggle, stop, loop, elapsed/total time and a position (seek) bar over the whole song.
+- **Transport**, directly below the tracks (under C only, not the full width): play/pause toggle, stop, loop, elapsed/total time and a position (seek) bar over the whole song.
 - **Status bar**: file name, integrity result and sample availability summary on the left; the latest error and the errors icon in the middle; master volume and the arrangement zoom sliders on the right.
 
 ## MVP scope
@@ -120,7 +120,7 @@ Not implemented yet:
 
 - Solo per track (cheap now that each track has its own buffer).
 - Highlighting in C the patterns of a sample selected in A.
-- A collapsible top panel to give the arrangement the full height (it is resizable today).
+- Collapsible panels, to give the tracks more room (both dividers can be dragged today).
 
 ## After the MVP
 

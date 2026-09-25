@@ -10,10 +10,10 @@ use crate::dialogs::{self, Dialog};
 use crate::errors::ErrorLog;
 use crate::i18n::{self, t, tf};
 use crate::chrome::{self, StatusLine, StatusSliders};
+use crate::layout;
 use crate::loader::{self, file_name, LoadOutcome, Loaded};
-use crate::panels;
 use crate::screenshot::{self, ScreenshotJob};
-use crate::transport::{self, Transport};
+use crate::transport::Transport;
 use crate::view::{self, ViewState};
 use crate::widgets;
 use crate::arrangement;
@@ -129,11 +129,11 @@ impl PlayerApp {
                 let dividers = self.config.dividers();
                 // The stored positions are already within the schema's limits
                 // (`with_defaults`), but clamp anyway.
-                let (a_lo, a_hi) = view.divider_limits.tabs_width_range();
-                let (c_lo, c_hi) = view.divider_limits.arrangement_height_range();
-                view.tabs_width_percent = (dividers.tabs_width_percent as f32).clamp(a_lo, a_hi);
-                view.arrangement_height_percent =
-                    (dividers.arrangement_height_percent as f32).clamp(c_lo, c_hi);
+                let limits = view.divider_limits;
+                view.tracks_width_percent = (dividers.tracks_width_percent as f32)
+                    .clamp(limits.tracks_width.min, limits.tracks_width.max);
+                view.tabs_height_percent = (dividers.tabs_height_percent as f32)
+                    .clamp(limits.tabs_height.min, limits.tabs_height.max);
                 if let Some(volume) = screenshot::initial_volume() {
                     view.volume = volume;
                 }
@@ -234,8 +234,8 @@ impl PlayerApp {
     fn track_dividers(&mut self) {
         let State::Ready(r) = &self.state else { return };
         let now = DividerState {
-            tabs_width_percent: r.view.tabs_width_percent.round() as i32,
-            arrangement_height_percent: r.view.arrangement_height_percent.round() as i32,
+            tracks_width_percent: r.view.tracks_width_percent.round() as i32,
+            tabs_height_percent: r.view.tabs_height_percent.round() as i32,
         };
         if now != self.config.dividers() {
             self.config.set_dividers(&now);
@@ -419,8 +419,8 @@ impl eframe::App for PlayerApp {
         egui::Panel::top("menu_bar")
             .show(ui, |ui| actions = chrome::menu_bar(ui, &recent, can_export));
 
-        // Bottom ribbons: the status bar is the lowest, the transport sits
-        // right above it, directly under the arrangement.
+        // The footer, the full width of the window. (The transport is not
+        // here: it sits under the tracks, see `layout`.)
         let errors = &self.errors;
         let mut open_errors = false;
         egui::Panel::bottom("status_bar").show(ui, |ui| {
@@ -440,12 +440,6 @@ impl eframe::App for PlayerApp {
         if open_errors {
             self.dialog = Some(Dialog::Errors);
         }
-        if let State::Ready(r) = &mut self.state {
-            egui::Panel::bottom("transport_bar").show(ui, |ui| {
-                let Ready { view, transport, .. } = &mut **r;
-                transport::show(ui, transport, view);
-            });
-        }
 
         egui::CentralPanel::default().show(ui, |ui| match &mut self.state {
             State::Empty => chrome::empty_state(ui),
@@ -455,39 +449,10 @@ impl eframe::App for PlayerApp {
             }
             State::Ready(ready) => {
                 let Ready { loaded, view, transport, .. } = &mut **ready;
-                let total = ui.available_height();
-                // As for the vertical divider, the size comes from the stored
-                // percentage (see `panels::top_row`).
-                let top = egui::Panel::top("info_panel")
-                    .resizable(false)
-                    .exact_size(total * (100.0 - view.arrangement_height_percent) / 100.0)
-                    .show(ui, |ui| panels::top_row(ui, loaded, view, transport));
-                let edge = top.response.rect;
-                let delta = panels::splitter(
-                    ui,
-                    "top_splitter",
-                    edge.left_bottom(),
-                    edge.width(),
-                    panels::Axis::Horizontal,
-                );
-                if total > 0.0 {
-                    // Dragging down grows the top row, so C shrinks.
-                    let range = view.divider_limits.arrangement_height_range();
-                    view.arrangement_height_percent = panels::clamp_percent(
-                        view.arrangement_height_percent - delta / total * 100.0,
-                        total,
-                        range,
-                    );
-                }
+                // Left column (tabs over properties), tracks and, under
+                // them, the transport, with their dividers.
                 let scopes = transport.track_scopes(widgets::scope_points(arrangement::LEFT_WIDTH));
-                arrangement::show(
-                    ui,
-                    loaded,
-                    view,
-                    transport.playhead(),
-                    transport.is_playing(),
-                    &scopes,
-                );
+                layout::show(ui, loaded, view, transport, &scopes);
             }
         });
 
