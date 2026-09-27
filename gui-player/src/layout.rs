@@ -49,6 +49,14 @@ pub fn clamp_percent(percent: f32, total: f32, limit: DividerLimit) -> f32 {
     percent.clamp(lo, hi)
 }
 
+/// Inner margin of the panels, in points: the default (about 8) wastes space.
+const PANEL_MARGIN: i8 = 2;
+
+/// The panel frame in the current style with the compact margin.
+fn compact(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::same(PANEL_MARGIN))
+}
+
 /// Direction of a divider line.
 #[derive(Clone, Copy)]
 pub enum Axis {
@@ -115,6 +123,7 @@ pub fn show(
     let left = egui::Panel::left("left_column")
         .resizable(false)
         .exact_size(left_width)
+        .frame(compact(ui))
         .show(ui, |ui| left_column(ui, l, view, transport));
 
     // The vertical divider: dragging it right makes the left column wider,
@@ -126,8 +135,8 @@ pub fn show(
             clamp_percent(view.tracks_width_percent - delta / total * 100.0, total, limit);
     }
 
-    egui::CentralPanel::default().show(ui, |ui| {
-        egui::Panel::bottom("transport_bar").show(ui, |ui| transport::show(ui, transport, view));
+    egui::CentralPanel::default().frame(compact(ui)).show(ui, |ui| {
+        egui::Panel::bottom("transport_bar").frame(compact(ui)).show(ui, |ui| transport::show(ui, transport, view));
         arrangement::show(ui, l, view, transport.playhead(), transport.is_playing(), scopes);
     });
 }
@@ -142,6 +151,7 @@ fn left_column(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
     let tabs = egui::Panel::top("tabs_panel")
         .resizable(false)
         .exact_size(total * view.tabs_height_percent / 100.0)
+        .frame(compact(ui))
         .show(ui, |ui| panels::lists(ui, l, view, transport));
 
     // Dragging it down makes A taller, so B shorter.
@@ -152,7 +162,7 @@ fn left_column(ui: &mut egui::Ui, l: &Loaded, view: &mut ViewState, transport: &
             clamp_percent(view.tabs_height_percent + delta / total * 100.0, total, limit);
     }
 
-    egui::CentralPanel::default().show(ui, |ui| panels::properties(ui, l, view));
+    egui::CentralPanel::default().frame(compact(ui)).show(ui, |ui| panels::properties(ui, l, view));
 }
 
 #[cfg(test)]

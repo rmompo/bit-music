@@ -441,7 +441,9 @@ impl eframe::App for PlayerApp {
             self.dialog = Some(Dialog::Errors);
         }
 
-        egui::CentralPanel::default().show(ui, |ui| match &mut self.state {
+        // No margin around the whole layout: each panel inside has its own.
+        let container = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO);
+        egui::CentralPanel::default().frame(container).show(ui, |ui| match &mut self.state {
             State::Empty => chrome::empty_state(ui),
             State::Loading { path, .. } => chrome::loading_state(ui, &file_name(path)),
             State::Failed { path, message } => {
