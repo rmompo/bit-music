@@ -85,6 +85,8 @@
   "btn.reset_all": "Reset all to defaults",
   "btn.restore_default": "Restore default",
   "btn.clear_history": "Clear history",
+  "settings.group.appearance": "Appearance",
+  "settings.group.files": "Files",
   "settings.recent_files": "Recent files",
   "settings.history_count": "{count} in the history",
   "settings.unavailable": "(unavailable)",

@@ -249,43 +249,60 @@ fn error_row(ui: &mut egui::Ui, entry: &errors::ErrorEntry) -> bool {
     remove
 }
 
-/// The body of Tools > Settings, built from the schema: one row per
-/// user-editable setting, with the control its `controlType` asks for and a
-/// button to restore its default.
-fn settings_body(ui: &mut egui::Ui, draft: &mut Config) {
-    egui::Grid::new("settings_grid")
-        .num_columns(3)
-        .spacing([16.0, 8.0])
-        .show(ui, |ui| {
-            for def in config::user_definitions() {
-                ui.vertical(|ui| {
-                    ui.set_width(240.0);
-                    ui.label(setting_text(&def.key, "title", &def.title));
-                    let description = setting_text(&def.key, "description", &def.description);
-                    if !description.is_empty() {
-                        ui.label(RichText::new(description).weak().small());
-                    }
-                });
-                setting_control(ui, def, draft);
-                let changed = def.default.is_some() && draft.value(&def.key) != def.default;
-                // Square like the control next to it, as tall as the control.
-                let side = ui.spacing().interact_size.y;
-                let restore = ui
-                    .add_enabled(changed, IconButton::new(regular::ARROW_COUNTER_CLOCKWISE).size(side))
-                    .on_hover_text(t("btn.restore_default"));
-                if restore.clicked() {
-                    if let Some(default) = &def.default {
-                        draft.set(&def.key, default.clone());
-                    }
-                }
-                ui.end_row();
+/// Groups the user-editable settings for display: a heading (an i18n key)
+/// plus the keys shown under it, in order. Every setting `config::
+/// user_definitions()` lists must appear in exactly one group — checked by
+/// `every_user_setting_is_in_exactly_one_group`.
+const SETTINGS_GROUPS: &[(&str, &[&str])] = &[
+    ("settings.group.appearance", &[config::LANG, config::THEME]),
+    ("settings.group.files", &[config::PATH, config::MAX_LAST_OPENED]),
+];
 
-                // The history goes right under the setting for its size.
-                if def.key == config::MAX_LAST_OPENED {
-                    history_row(ui, draft);
+/// The body of Tools > Settings, built from the schema and grouped by
+/// [`SETTINGS_GROUPS`]: one row per user-editable setting, with the control
+/// its `controlType` asks for and a button to restore its default.
+fn settings_body(ui: &mut egui::Ui, draft: &mut Config) {
+    for (i, &(heading_key, keys)) in SETTINGS_GROUPS.iter().enumerate() {
+        if i > 0 {
+            ui.add_space(10.0);
+        }
+        ui.label(RichText::new(t(heading_key)).strong());
+        ui.separator();
+        egui::Grid::new(("settings_grid", i))
+            .num_columns(3)
+            .spacing([16.0, 8.0])
+            .show(ui, |ui| {
+                for &key in keys {
+                    let Some(def) = config::definition(key) else { continue };
+                    ui.vertical(|ui| {
+                        ui.set_width(240.0);
+                        ui.label(setting_text(&def.key, "title", &def.title));
+                        let description = setting_text(&def.key, "description", &def.description);
+                        if !description.is_empty() {
+                            ui.label(RichText::new(description).weak().small());
+                        }
+                    });
+                    setting_control(ui, def, draft);
+                    let changed = def.default.is_some() && draft.value(&def.key) != def.default;
+                    // Square like the control next to it, as tall as the control.
+                    let side = ui.spacing().interact_size.y;
+                    let restore = ui
+                        .add_enabled(changed, IconButton::new(regular::ARROW_COUNTER_CLOCKWISE).size(side))
+                        .on_hover_text(t("btn.restore_default"));
+                    if restore.clicked() {
+                        if let Some(default) = &def.default {
+                            draft.set(&def.key, default.clone());
+                        }
+                    }
+                    ui.end_row();
+
+                    // The history goes right under the setting for its size.
+                    if def.key == config::MAX_LAST_OPENED {
+                        history_row(ui, draft);
+                    }
                 }
-            }
-        });
+            });
+    }
 }
 
 /// `Recent files | N in the history [Clear history]`.
@@ -464,6 +481,27 @@ mod tests {
             egui::__run_test_ctx(|ctx| assert!(!show(ctx, &mut open, &mut draft, "done", &mut errors).quit));
             assert_eq!(open, Some(d));
         }
+    }
+
+    #[test]
+    fn every_user_setting_is_in_exactly_one_group() {
+        let grouped: Vec<&str> = SETTINGS_GROUPS.iter().flat_map(|&(_, keys)| keys.iter().copied()).collect();
+        let user: Vec<&str> = config::user_definitions().map(|d| d.key.as_str()).collect();
+        for key in &user {
+            assert_eq!(
+                grouped.iter().filter(|g| *g == key).count(),
+                1,
+                "{key} should be in exactly one settings group"
+            );
+        }
+        assert_eq!(grouped.len(), user.len(), "a group lists a key that is not a user setting");
+        for &(heading_key, _) in SETTINGS_GROUPS {
+            for lang in i18n::Lang::ALL {
+                i18n::set_language(lang);
+                assert!(i18n::lookup(heading_key).is_some(), "{lang:?}: missing {heading_key}");
+            }
+        }
+        i18n::set_language(i18n::Lang::English);
     }
 
     #[test]

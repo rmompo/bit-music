@@ -85,6 +85,8 @@
   "btn.reset_all": "Restablecer todo",
   "btn.restore_default": "Restablecer valor por defecto",
   "btn.clear_history": "Borrar historial",
+  "settings.group.appearance": "Apariencia",
+  "settings.group.files": "Archivos",
   "settings.recent_files": "Archivos recientes",
   "settings.history_count": "{count} en el historial",
   "settings.unavailable": "(no disponible)",
