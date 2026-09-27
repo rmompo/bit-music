@@ -240,6 +240,11 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         let playing = transport.is_playing();
         let available = transport.available();
 
+        // Play/pause and stop are one group (tight spacing); loop is its
+        // own, set apart with the normal spacing plus a bit more.
+        let normal_spacing = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = 2.0;
+
         // One toggle: shows what a click will do. It goes back to "play"
         // by itself when playback stops or reaches the end.
         let (icon, tip) = if playing {
@@ -259,6 +264,9 @@ pub fn show(ui: &mut egui::Ui, transport: &Transport, view: &mut ViewState) {
         if stop.clicked() {
             transport.stop();
         }
+
+        ui.spacing_mut().item_spacing.x = normal_spacing;
+        ui.add_space(4.0);
         ui.add_enabled_ui(available, |ui| {
             let looping = ui
                 .add(IconButton::new(regular::REPEAT).selected(view.looping))
