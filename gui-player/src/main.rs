@@ -46,7 +46,7 @@ fn run() -> eframe::Result {
     // Optional first argument: a .bm1 to open at startup.
     let initial = std::env::args_os().nth(1).map(PathBuf::from);
 
-    // Open the window the way it was left (see gui-player.json).
+    // Open the window the way it was left (see bm-gui.json).
     let config_path = config::Config::default_path();
     let window = config_path
         .as_deref()

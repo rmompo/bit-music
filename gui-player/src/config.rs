@@ -1,8 +1,8 @@
-//! `gui-player.json`: settings and history, stored next to the executable.
+//! `bm-gui.json`: settings and history, stored next to the executable.
 //!
 //! The file only holds current values. Everything else about a setting —
 //! whether the user can edit it, its title, data type, control, limits and
-//! default — is defined in `gui-player.schema.json`, which is embedded in
+//! default — is defined in `bm-gui.schema.json`, which is embedded in
 //! the executable. If the file does not exist it is created with the
 //! defaults.
 
@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The schema of the configuration file.
-pub const SCHEMA: &str = include_str!("../gui-player.schema.json");
-pub const CONFIG_FILE: &str = "gui-player.json";
+pub const SCHEMA: &str = include_str!("../bm-gui.schema.json");
+pub const CONFIG_FILE: &str = "bm-gui.json";
 
 pub const MAX_LAST_OPENED: &str = "maxLastOpened";
 pub const LANG: &str = "lang";

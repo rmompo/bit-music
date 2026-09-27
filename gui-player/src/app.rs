@@ -53,7 +53,7 @@ pub struct PlayerApp {
     errors: ErrorLog,
     /// The copy of the configuration being edited in Tools > Settings.
     settings_draft: Option<Config>,
-    /// Settings and history (`gui-player.json`).
+    /// Settings and history (`bm-gui.json`).
     config: Config,
     /// Where the configuration is stored; `None` means memory only.
     config_path: Option<PathBuf>,
@@ -67,7 +67,7 @@ const APP_TITLE: &str = dialogs::PRODUCT;
 
 impl PlayerApp {
     /// `initial` is a composition to open at startup (e.g. from the command line).
-    /// `config_path` is where `gui-player.json` lives (created if missing);
+    /// `config_path` is where `bm-gui.json` lives (created if missing);
     /// `None` keeps the configuration in memory only.
     pub fn new(ctx: &egui::Context, initial: Option<PathBuf>, config_path: Option<PathBuf>) -> Self {
         chrome::install_icon_font(ctx);
