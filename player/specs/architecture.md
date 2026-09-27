@@ -79,10 +79,9 @@ placeholder `bm magik`.
 ## Running the Windows build
 
 The Windows executable is not code-signed, so Windows 11 Smart App Control
-can block it. On a development machine, Windows Developer Mode lets it run;
-see `../../specs/ci-and-signing.md`, which also documents the CI workflow that
-used to build it and how to get signed binaries. The demo composition and its
-synthesized samples live in `demos/`.
+can block it. On a development machine, turn it off in *Windows Security >
+App & browser control*, or use Windows Developer Mode, to let it run. The
+demo composition and its synthesized samples live in `demos/`.
 
 ## Modules
 

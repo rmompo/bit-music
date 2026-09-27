@@ -5,25 +5,17 @@
 # the same relative layout, since a .bm1 finds its samples relative to
 # itself).
 #
-# Usage: scripts/package-windows.sh [--signed] [version-label]
+# Usage: scripts/package-windows.sh [version-label]
 #        (default label: dev)
 #
-# By default the executables come from the release build (target/); with
-# --signed they come from dist/signed/, where scripts/sign-windows.sh puts the
-# signed copies. Only the package's own folder and zip are replaced: dist/signed
-# is left alone.
+# The executables come from the release build (target/).
 #
-# Requires `zip`. Run scripts/build-windows.sh for bm and gui-player first (or
-# scripts/build-signed-windows.sh, for --signed).
+# Requires `zip`. Run scripts/build-windows.sh for bm and gui-player first.
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 BIN="target/x86_64-pc-windows-gnu/release"
-if [ "${1:-}" = "--signed" ]; then
-    BIN="dist/signed"
-    shift
-fi
 
 VERSION="${1:-dev}"
 VERSION="${VERSION//\//-}"   # a branch name like feature/x must not break the file name
@@ -34,7 +26,6 @@ for exe in bm.exe bm-gui.exe; do
     if [ ! -f "${BIN}/${exe}" ]; then
         echo "Error: ${BIN}/${exe} not found. Build it first:" >&2
         echo "  scripts/build-windows.sh bm && scripts/build-windows.sh gui-player" >&2
-        echo "  (or scripts/build-signed-windows.sh for --signed)" >&2
         exit 1
     fi
 done

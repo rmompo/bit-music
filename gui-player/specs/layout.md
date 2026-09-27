@@ -131,7 +131,7 @@ Not implemented yet:
 
 - GUI framework: **egui/eframe**. A spike (a minimal eframe window with `cpal` linked) built and ran on Windows (mingw cross-compilation from WSL) and on Linux (Wayland and X11), with about 0.6-1.4 ms of UI CPU per frame for 16,000 unculled rectangles. Electron was analyzed and not chosen for the player; the library split keeps the door open to a different front end later.
 - The Windows release build uses the `windows` subsystem, so no console window appears behind the GUI (which is why startup errors go to a dialog).
-- **Running the unsigned Windows build:** Windows 11 Smart App Control can block it; Windows Developer Mode lets it run. See `../../specs/ci-and-signing.md`.
+- **Running the unsigned Windows build:** Windows 11 Smart App Control can block it; turn it off in *Windows Security > App & browser control*, or use Windows Developer Mode, to let it run.
 - `File > Open` uses the native dialog through `rfd` (Win32 dialog on Windows; on Linux it goes through the desktop portal, so an `xdg-desktop-portal` service must be running).
 - **Build gotcha (Windows target):** `wgpu-hal` and `gpu-allocator` must use the same `windows` crate version. `cpal 0.15` pins `windows 0.54`, and cargo may reuse it for `gpu-allocator` (which accepts `>=0.53, <=0.62`), breaking `wgpu-hal`'s DX12 code with "multiple versions of crate `windows`". `Cargo.lock` therefore points `gpu-allocator` to `windows 0.62.2`; if a `cargo update` reverts it, re-point that one entry (or upgrade `cpal`).
 - Linux runtime needs the usual desktop libraries (Wayland/X11, Vulkan or GL); no development packages are needed to build.
