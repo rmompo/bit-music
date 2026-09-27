@@ -52,9 +52,21 @@ pub fn clamp_percent(percent: f32, total: f32, limit: DividerLimit) -> f32 {
 /// Inner margin of the panels, in points: the default (about 8) wastes space.
 const PANEL_MARGIN: i8 = 2;
 
-/// The panel frame in the current style with the compact margin.
-fn compact(ui: &egui::Ui) -> egui::Frame {
+/// The panel frame in the current style with the compact margin: every panel
+/// in the window uses this, so they all carry the same margin (the menu bar
+/// and status bar in `app.rs` included). The exception is a purely
+/// structural container that only arranges other, already margined, panels
+/// (the left column, the right side): that one must stay at [`no_margin`],
+/// or an edge shared with one of its children would be inset twice — once
+/// by each frame.
+pub(crate) fn compact(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::same(PANEL_MARGIN))
+}
+
+/// The panel frame with no inner margin, for a container that only arranges
+/// other (already margined) panels and should not add its own margin.
+fn no_margin(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO)
 }
 
 /// Direction of a divider line.
@@ -123,7 +135,7 @@ pub fn show(
     let left = egui::Panel::left("left_column")
         .resizable(false)
         .exact_size(left_width)
-        .frame(compact(ui))
+        .frame(no_margin(ui))
         .show(ui, |ui| left_column(ui, l, view, transport));
 
     // The vertical divider: dragging it right makes the left column wider,
@@ -135,9 +147,11 @@ pub fn show(
             clamp_percent(view.tracks_width_percent - delta / total * 100.0, total, limit);
     }
 
-    egui::CentralPanel::default().frame(compact(ui)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(no_margin(ui)).show(ui, |ui| {
         egui::Panel::bottom("transport_bar").frame(compact(ui)).show(ui, |ui| transport::show(ui, transport, view));
-        arrangement::show(ui, l, view, transport.playhead(), transport.is_playing(), scopes);
+        compact(ui).show(ui, |ui| {
+            arrangement::show(ui, l, view, transport.playhead(), transport.is_playing(), scopes);
+        });
     });
 }
 
