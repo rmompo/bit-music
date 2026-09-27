@@ -26,6 +26,14 @@
       "controlType": "input",
       "values": { "defaultValue": "C:\\LocalFiles\\proyectos\\personal\\bit-music\\demos\\songs\\" }
     },
+    "theme": {
+      "settingType": "USER",
+      "settingTitle": "Theme",
+      "settingDescription": "Dark or light interface, or follow the system.",
+      "dataType": "string",
+      "controlType": "combo",
+      "values": { "enumValue": ["DARK", "LIGHT", "SYSTEM"], "defaultValue": "SYSTEM" }
+    },
     "windowMaximized": {
       "settingType": "SYSTEM",
       "settingTitle": "Window maximized",

@@ -20,6 +20,7 @@ pub const CONFIG_FILE: &str = "bm-gui.json";
 pub const MAX_LAST_OPENED: &str = "maxLastOpened";
 pub const LANG: &str = "lang";
 pub const PATH: &str = "path";
+pub const THEME: &str = "theme";
 pub const WINDOW_MAXIMIZED: &str = "windowMaximized";
 pub const WINDOW_X: &str = "windowX";
 pub const WINDOW_Y: &str = "windowY";
@@ -361,6 +362,16 @@ impl Config {
         crate::i18n::Lang::from_setting(&self.text(LANG).unwrap_or_default())
     }
 
+    /// The theme preference (the `theme` setting): dark, light, or "follow
+    /// the system" (the default, and also the fallback for anything else).
+    pub fn theme(&self) -> eframe::egui::ThemePreference {
+        match self.text(THEME).as_deref() {
+            Some("DARK") => eframe::egui::ThemePreference::Dark,
+            Some("LIGHT") => eframe::egui::ThemePreference::Light,
+            _ => eframe::egui::ThemePreference::System,
+        }
+    }
+
     /// The folder file dialogs start in (the `path` setting), if it is not
     /// empty.
     pub fn files_path(&self) -> Option<String> {
@@ -516,9 +527,28 @@ mod tests {
     }
 
     #[test]
-    fn the_user_settings_are_language_history_size_and_folder() {
+    fn the_user_settings_are_language_history_size_folder_and_theme() {
         let user: Vec<&str> = user_definitions().map(|d| d.key.as_str()).collect();
-        assert_eq!(user, [LANG, MAX_LAST_OPENED, PATH]);
+        assert_eq!(user, [LANG, MAX_LAST_OPENED, PATH, THEME]);
+    }
+
+    #[test]
+    fn the_theme_defaults_to_system_and_only_accepts_its_three_choices() {
+        let config = defaults();
+        assert_eq!(config.theme(), eframe::egui::ThemePreference::System);
+
+        let mut c = defaults();
+        c.set(THEME, Value::from("DARK"));
+        assert_eq!(c.with_defaults().theme(), eframe::egui::ThemePreference::Dark);
+
+        let mut c = defaults();
+        c.set(THEME, Value::from("LIGHT"));
+        assert_eq!(c.with_defaults().theme(), eframe::egui::ThemePreference::Light);
+
+        // Anything else falls back to the default (System) on normalization.
+        let mut c = defaults();
+        c.set(THEME, Value::from("PURPLE"));
+        assert_eq!(c.with_defaults().theme(), eframe::egui::ThemePreference::System);
     }
 
     #[test]

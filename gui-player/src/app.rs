@@ -399,6 +399,9 @@ impl eframe::App for PlayerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         i18n::set_language(screenshot::language_override().unwrap_or_else(|| self.config.language()));
+        // Applied every frame (cheap, and idempotent when unchanged) so a
+        // change in Tools > Settings takes effect immediately, no restart.
+        ctx.set_theme(self.config.theme());
 
         if screenshot::icon_mode() {
             // Developer aid: just the icon glyph, white on black, filling the window.
