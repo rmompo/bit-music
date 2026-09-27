@@ -209,6 +209,42 @@ impl PlayerApp {
         }
     }
 
+    /// Tools > Export > Package: asks where to save and writes the open
+    /// composition and every sample it can read into a `.bmz`, then reports
+    /// the result (including any sample that had to be skipped) in a
+    /// dialog. Unlike `export_wav`, this works even without a valid audio
+    /// session: packaging only copies files, it does not decode audio.
+    fn export_package(&mut self) {
+        let State::Ready(ready) = &self.state else { return };
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(t("package.title"))
+            .add_filter(t("package.filter"), &["bmz"])
+            .set_file_name(package_file_name(&ready.loaded.project.path));
+        if let Some(dir) = dialog_dir(&self.config) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else { return };
+        match bm_project::write_package(&ready.loaded.project, &path) {
+            Ok(report) if report.skipped.is_empty() => {
+                self.notice = tf("package.done", &[("path", &path.display().to_string())]);
+                self.dialog = Some(Dialog::Notice);
+            }
+            Ok(report) => {
+                self.notice = tf(
+                    "package.done_skipped",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("count", &report.skipped.len().to_string()),
+                    ],
+                );
+                self.dialog = Some(Dialog::Notice);
+            }
+            Err(err) => {
+                self.errors.push(tf("package.failed", &[("error", &err.to_string())]));
+            }
+        }
+    }
+
     /// Adds a successfully opened composition to the history and saves it.
     fn remember(&mut self, path: &std::path::Path) {
         let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
@@ -328,7 +364,7 @@ fn dialog_dir(config: &Config) -> Option<PathBuf> {
 fn pick_file(config: &Config) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new()
         .set_title(t("file.open_title"))
-        .add_filter(t("file.open_filter"), &["bm1"]);
+        .add_filter(t("file.open_filter"), &["bm1", "bmz"]);
     if let Some(dir) = dialog_dir(config) {
         dialog = dialog.set_directory(dir);
     }
@@ -342,6 +378,15 @@ fn export_file_name(composition: &Path) -> String {
         .file_stem()
         .map_or_else(|| "export".to_string(), |s| s.to_string_lossy().into_owned());
     format!("{stem}.wav")
+}
+
+/// The file name a composition's package starts with: its own name with a
+/// `.bmz` extension.
+fn package_file_name(composition: &Path) -> String {
+    let stem = composition
+        .file_stem()
+        .map_or_else(|| "package".to_string(), |s| s.to_string_lossy().into_owned());
+    format!("{stem}.bmz")
 }
 
 /// Renders nothing new: writes the composition's full mix (the same audio
@@ -416,14 +461,18 @@ impl eframe::App for PlayerApp {
         let mut actions = chrome::MenuActions::default();
         let recent: Vec<&str> = self.config.last_opened.iter().map(|e| e.value.as_str()).collect();
         let can_export = matches!(&self.state, State::Ready(r) if r.loaded.session.is_some());
+        // Packaging only copies files (it needs no decoded audio), so it is
+        // available for any open composition, even with missing samples.
+        let can_package = matches!(&self.state, State::Ready(_));
         egui::Panel::top("menu_bar")
-            .show(ui, |ui| actions = chrome::menu_bar(ui, &recent, can_export));
+            .frame(layout::compact(ui))
+            .show(ui, |ui| actions = chrome::menu_bar(ui, &recent, can_export, can_package));
 
         // The footer, the full width of the window. (The transport is not
         // here: it sits under the tracks, see `layout`.)
         let errors = &self.errors;
         let mut open_errors = false;
-        egui::Panel::bottom("status_bar").show(ui, |ui| {
+        egui::Panel::bottom("status_bar").frame(layout::compact(ui)).show(ui, |ui| {
             open_errors = match &mut self.state {
                 State::Ready(r) => {
                     let Ready { loaded, view, .. } = &mut **r;
@@ -490,6 +539,9 @@ impl eframe::App for PlayerApp {
         }
         if actions.export_wav {
             self.export_wav();
+        }
+        if actions.export_package {
+            self.export_package();
         }
         if actions.quit {
             self.dialog = Some(Dialog::ConfirmQuit);
@@ -581,6 +633,32 @@ mod tests {
         assert_eq!(back.sample_rate, bm_render::OUTPUT_SAMPLE_RATE);
         assert_eq!(back.data.len(), session.master.len());
         assert!(back.data.iter().any(|v| *v != 0.0));
+    }
+
+    #[test]
+    fn a_packaged_composition_reopens_with_the_same_title_and_samples() {
+        let mut app = PlayerApp::new(&egui::Context::default(), Some(demo()), None);
+        wait_until_loaded(&mut app);
+        let State::Ready(ready) = &app.state else { panic!("the demo should be open") };
+
+        let dir = std::env::temp_dir().join(format!("gui-player-package-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(package_file_name(&ready.loaded.project.path));
+        assert_eq!(path.file_name().unwrap(), "song1.bmz");
+
+        let report = bm_project::write_package(&ready.loaded.project, &path).unwrap();
+        assert!(report.skipped.is_empty());
+
+        let mut reopened = PlayerApp::new(&egui::Context::default(), Some(path), None);
+        wait_until_loaded(&mut reopened);
+        let State::Ready(reopened_ready) = &reopened.state else { panic!(".bmz should reopen") };
+        assert_eq!(
+            reopened_ready.loaded.project.composition.metadata.title,
+            ready.loaded.project.composition.metadata.title
+        );
+        assert_eq!(reopened_ready.loaded.sample_reports.len(), ready.loaded.sample_reports.len());
+        assert!(reopened_ready.loaded.session.is_some());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

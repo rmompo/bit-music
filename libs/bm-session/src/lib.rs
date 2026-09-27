@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use bm_dsp::AudioBuffer;
-use bm_project::{Project, ProjectError};
+use bm_project::{Project, ProjectError, SampleSource};
 use bm_render::TrackBuffer;
 use bm_timeline::ResolvedArrangement;
 use bm_wav::WavError;
@@ -50,10 +50,16 @@ impl Session {
     }
 }
 
-/// Opens a `.bm1`, resolves its arrangement, decodes every sample and
-/// renders every track.
+/// Opens a `.bm1` from disk, resolves its arrangement, decodes every sample
+/// and renders every track.
 pub fn open(path: &Path) -> Result<Session, SessionError> {
-    let project = bm_project::load(path)?;
+    open_project(bm_project::load(path)?)
+}
+
+/// The same pipeline as [`open`], but starting from a [`Project`] already
+/// loaded — from disk ([`bm_project::load`]) or from a `.bmz` package
+/// ([`bm_project::load_bmz`]). Each sample is read from `project.source`.
+pub fn open_project(project: Project) -> Result<Session, SessionError> {
     let composition = &project.composition;
 
     let timeline = bm_timeline::resolve(composition);
@@ -61,12 +67,14 @@ pub fn open(path: &Path) -> Result<Session, SessionError> {
 
     let mut samples = HashMap::new();
     for sample in &composition.samples {
-        let audio = bm_wav::load_wav(Path::new(&sample.file)).map_err(|source| {
-            SessionError::Sample {
-                sample_id: sample.id.clone(),
-                source,
-            }
-        })?;
+        let audio = match &project.source {
+            SampleSource::Disk => bm_wav::load_wav(Path::new(&sample.file)),
+            SampleSource::Archive(entries) => match entries.get(&sample.file) {
+                Some(bytes) => bm_wav::load_wav_bytes(bytes, &sample.file),
+                None => Err(bm_wav::missing(&sample.file)),
+            },
+        }
+        .map_err(|source| SessionError::Sample { sample_id: sample.id.clone(), source })?;
         samples.insert(sample.id.clone(), audio);
     }
 
@@ -104,6 +112,20 @@ mod tests {
         let longest = session.tracks.iter().map(|t| t.audio.data.len()).max().unwrap();
         assert_eq!(session.master.len(), longest);
         assert!(session.master_duration_seconds() > 2.0);
+    }
+
+    #[test]
+    fn opens_a_packaged_bmz_the_same_way_as_the_bm1_it_came_from() {
+        let project = bm_project::load(&demo()).unwrap();
+        let out = std::env::temp_dir().join(format!("bm-session-pkg-{}.bmz", std::process::id()));
+        bm_project::write_package(&project, &out).unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+
+        let packaged = bm_project::load_bmz(&bytes, out).unwrap();
+        let session = open_project(packaged).expect("the package should open like the original");
+        assert_eq!(session.samples.len(), 5);
+        assert_eq!(session.project.composition.metadata.title, "Demo");
     }
 
     #[test]

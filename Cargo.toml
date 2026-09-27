@@ -32,6 +32,8 @@ egui-phosphor = "0.14"
 # Local time of day for the error log (no default features: only the system clock).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rfd = "0.17"
+# .bmz packages: pure-Rust deflate only (no C dependency, safe to cross-compile).
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3

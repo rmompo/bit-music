@@ -10,3 +10,5 @@ repository.workspace = true
 bm-format.workspace = true
 bm-wav.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
+zip.workspace = true

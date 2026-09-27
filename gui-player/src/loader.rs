@@ -85,9 +85,11 @@ pub fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Loads `path` synchronously (structure, sample check, audio).
+/// Loads `path` synchronously (structure, sample check, audio). Dispatches
+/// on the extension: a `.bm1` is read directly, a `.bmz` package is opened
+/// and kept fully in memory (see `bm_project::load_path`).
 pub fn load_blocking(path: &Path) -> LoadOutcome {
-    let project = match bm_project::load(path) {
+    let project = match bm_project::load_path(path) {
         Ok(p) => p,
         Err(err) => {
             return LoadOutcome::Failed {
@@ -97,12 +99,14 @@ pub fn load_blocking(path: &Path) -> LoadOutcome {
         }
     };
 
-    let sample_reports = bm_project::check_samples(&project.composition);
+    let sample_reports = bm_project::check_samples(&project);
     let timeline = bm_timeline::resolve(&project.composition);
     let seconds_per_step = bm_timeline::seconds_per_step(&project.composition.metadata);
 
+    // The project is loaded once and cloned into the session (cheap: a
+    // `.bmz`'s sample bytes are behind an `Arc`, so this never copies them).
     let (session, session_error) = if sample_reports.iter().all(|r| r.outcome.is_ok()) {
-        match bm_session::open(path) {
+        match bm_session::open_project(project.clone()) {
             Ok(s) => (Some(s), None),
             Err(err) => (None, Some(SessionIssue::Other(err.to_string()))),
         }
@@ -139,6 +143,25 @@ mod tests {
 
     fn demo() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1")
+    }
+
+    #[test]
+    fn loads_a_bmz_package_completely_like_its_bm1() {
+        let project = bm_project::load(&demo()).unwrap();
+        let out = std::env::temp_dir().join(format!("gui-player-loader-pkg-{}.bmz", std::process::id()));
+        bm_project::write_package(&project, &out).unwrap();
+
+        let LoadOutcome::Loaded(l) = load_blocking(&out) else {
+            std::fs::remove_file(&out).ok();
+            panic!(".bmz should load");
+        };
+        std::fs::remove_file(&out).ok();
+
+        assert!(l.file_name().ends_with(".bmz"));
+        assert_eq!(l.sample_reports.len(), 5);
+        assert!(l.all_samples_ok());
+        assert!(l.session.is_some() && l.session_error.is_none());
+        assert_eq!(l.timeline.tracks.len(), 5);
     }
 
     #[test]

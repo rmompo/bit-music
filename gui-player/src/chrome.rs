@@ -21,6 +21,8 @@ pub struct MenuActions {
     pub quit: bool,
     /// Tools > Export > WAV.
     pub export_wav: bool,
+    /// Tools > Export > Package.
+    pub export_package: bool,
     /// A file picked from File > Open recent.
     pub open_path: Option<PathBuf>,
     /// A modal dialog the user asked for (Tools / Help menus).
@@ -28,8 +30,11 @@ pub struct MenuActions {
 }
 
 /// `recent` are the paths for File > Open recent, newest first; `can_export`
-/// says whether there is a composition with audio to export.
-pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str], can_export: bool) -> MenuActions {
+/// says whether there is a composition with audio to export to WAV;
+/// `can_package` says whether there is a composition to bundle into a
+/// `.bmz` (true whenever one is open, even with missing samples: packaging
+/// only copies files, it does not need decoded audio).
+pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str], can_export: bool, can_package: bool) -> MenuActions {
     let mut actions = MenuActions::default();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(t("menu.file"), |ui| {
@@ -47,12 +52,6 @@ pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str], can_export: bool) -> MenuAct
                     }
                 });
             });
-            if ui.button(t("menu.quit")).clicked() {
-                actions.quit = true;
-                ui.close();
-            }
-        });
-        ui.menu_button(t("menu.tools"), |ui| {
             ui.menu_button(t("menu.export"), |ui| {
                 if ui
                     .add_enabled(can_export, egui::Button::new(t("menu.export_wav")))
@@ -61,7 +60,21 @@ pub fn menu_bar(ui: &mut egui::Ui, recent: &[&str], can_export: bool) -> MenuAct
                     actions.export_wav = true;
                     ui.close();
                 }
+                if ui
+                    .add_enabled(can_package, egui::Button::new(t("menu.export_package")))
+                    .clicked()
+                {
+                    actions.export_package = true;
+                    ui.close();
+                }
             });
+            ui.separator();
+            if ui.button(t("menu.quit")).clicked() {
+                actions.quit = true;
+                ui.close();
+            }
+        });
+        ui.menu_button(t("menu.tools"), |ui| {
             if ui.button(t("menu.settings")).clicked() {
                 actions.dialog = Some(Dialog::Settings);
                 ui.close();
@@ -302,7 +315,7 @@ mod tests {
     #[test]
     fn menu_bar_reports_no_action_when_nothing_is_clicked() {
         let mut actions = None;
-        egui::__run_test_ui(|ui| actions = Some(menu_bar(ui, &["/a/song.bm1"], true)));
+        egui::__run_test_ui(|ui| actions = Some(menu_bar(ui, &["/a/song.bm1"], true, true)));
         assert_eq!(actions, Some(MenuActions::default()));
     }
 }

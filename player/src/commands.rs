@@ -52,7 +52,7 @@ pub fn check_samples(file: &Path) -> bool {
     };
 
     let mut all_ok = true;
-    for report in bm_project::check_samples(&project.composition) {
+    for report in bm_project::check_samples(&project) {
         match report.outcome {
             Ok(()) => println!("OK: sample '{}' -> {}", report.sample_id, report.file),
             Err(err) => {

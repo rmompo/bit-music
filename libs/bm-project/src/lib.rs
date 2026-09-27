@@ -1,16 +1,22 @@
 //! Everything that touches the file system for a composition: loading a
-//! `.bm1`, resolving its sample paths relative to it, and checking that the
-//! referenced samples exist.
+//! `.bm1`, resolving its sample paths relative to it, checking that the
+//! referenced samples exist, and bundling a composition with its samples
+//! into a portable `.bmz` package (see [`package`]).
 //!
 //! This crate never prints; it returns values and structured errors so each
 //! application decides how to present them.
 
+pub mod package;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bm_format::{Composition, FormatError};
 use bm_wav::WavError;
 use thiserror::Error;
+
+pub use package::{PackageError, PackageReport, load_bmz, write_package};
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -23,29 +29,84 @@ pub enum ProjectError {
 
     #[error(transparent)]
     Format(#[from] FormatError),
+
+    #[error("could not read package '{path}': {source}")]
+    Zip {
+        path: String,
+        #[source]
+        source: zip::result::ZipError,
+    },
+
+    #[error("'{path}' is not a bit-music package (it has no .bm1 file inside)")]
+    NoComposition { path: String },
+}
+
+/// Where a project's bytes live: the real file system, or an in-memory
+/// `.bmz` archive, already fully decompressed at load time and keyed by the
+/// zip entry name each `sample.file` was resolved to (see [`load_bmz`]).
+#[derive(Debug, Clone)]
+pub enum SampleSource {
+    Disk,
+    Archive(Arc<HashMap<String, Vec<u8>>>),
+}
+
+impl SampleSource {
+    /// Reads the bytes of `file` (a `Project.composition.samples[].file`
+    /// value, already resolved by [`load`] or [`load_bmz`]).
+    pub fn read(&self, file: &str) -> std::io::Result<Vec<u8>> {
+        match self {
+            SampleSource::Disk => std::fs::read(file),
+            SampleSource::Archive(entries) => entries.get(file).cloned().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("'{file}' not found in the package"),
+                )
+            }),
+        }
+    }
 }
 
 /// A loaded, validated composition together with where it came from.
 #[derive(Debug, Clone)]
 pub struct Project {
-    /// Path of the `.bm1` file this project was loaded from.
+    /// Path of the file this project was opened from: a `.bm1` or a
+    /// `.bmz`.
     pub path: PathBuf,
-    /// The composition. Every `sample.file` is already resolved to a usable
-    /// path (absolute as written, or relative to the `.bm1`'s directory).
+    /// The composition. Every `sample.file` is already resolved to a key
+    /// usable with `source`: an absolute path (as written, or relative to
+    /// the `.bm1`'s directory) for [`SampleSource::Disk`], or a zip entry
+    /// name for [`SampleSource::Archive`].
     pub composition: Composition,
     /// Each sample's `file` exactly as written in the `.bm1`, by sample id
-    /// (for showing what is stored, as opposed to the resolved path).
+    /// (for showing what is stored, as opposed to the resolved path, and
+    /// for planning a `.bmz`'s folder structure).
     pub declared_files: HashMap<String, String>,
+    /// Where to read a sample's bytes from.
+    pub source: SampleSource,
 }
 
 /// Result of checking one sample file.
 #[derive(Debug)]
 pub struct SampleReport {
     pub sample_id: String,
-    /// The (already resolved) path that was checked.
+    /// The (already resolved) path or archive entry that was checked.
     pub file: String,
     /// `Ok` if the file exists and is a well-formed `.wav`.
     pub outcome: Result<(), WavError>,
+}
+
+/// Loads a project from `path`: a `.bm1` through [`load`], or a `.bmz`
+/// package through [`load_bmz`], dispatched by extension (case-insensitive).
+pub fn load_path(path: &Path) -> Result<Project, ProjectError> {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("bmz")) {
+        let bytes = std::fs::read(path).map_err(|source| ProjectError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        package::load_bmz(&bytes, path.to_path_buf())
+    } else {
+        load(path)
+    }
 }
 
 /// Loads a composition from a `.bm1` (JSON) file.
@@ -79,19 +140,31 @@ pub fn load(path: &Path) -> Result<Project, ProjectError> {
         path: path.to_path_buf(),
         composition,
         declared_files,
+        source: SampleSource::Disk,
     })
 }
 
-/// Checks that every sample referenced by `composition` is present and a
-/// well-formed `.wav` (paths must already be resolved, as after [`load`]).
-pub fn check_samples(composition: &Composition) -> Vec<SampleReport> {
-    composition
+/// Checks that every sample `project.composition` references is present and
+/// a well-formed `.wav`, reading from `project.source` (paths must already
+/// be resolved, as after [`load`] or [`load_bmz`]).
+pub fn check_samples(project: &Project) -> Vec<SampleReport> {
+    project
+        .composition
         .samples
         .iter()
-        .map(|sample| SampleReport {
-            sample_id: sample.id.clone(),
-            file: sample.file.clone(),
-            outcome: bm_wav::check_wav(Path::new(&sample.file)),
+        .map(|sample| {
+            let outcome = match &project.source {
+                SampleSource::Disk => bm_wav::check_wav(Path::new(&sample.file)),
+                SampleSource::Archive(entries) => match entries.get(&sample.file) {
+                    Some(bytes) => bm_wav::check_wav_bytes(bytes, &sample.file),
+                    None => Err(bm_wav::missing(&sample.file)),
+                },
+            };
+            SampleReport {
+                sample_id: sample.id.clone(),
+                file: sample.file.clone(),
+                outcome,
+            }
         })
         .collect()
 }
@@ -167,11 +240,26 @@ mod tests {
         std::fs::write(dir.join("song.bm1"), song).unwrap();
 
         let project = load(&dir.join("song.bm1")).unwrap();
-        let reports = check_samples(&project.composition);
+        let reports = check_samples(&project);
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(reports.len(), 2);
         assert!(reports[0].outcome.is_ok());
         assert!(reports[1].outcome.is_err());
+    }
+
+    #[test]
+    fn load_reads_from_disk() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demos/songs/song1.bm1");
+        let project = load(&path).unwrap();
+        assert!(matches!(project.source, SampleSource::Disk));
+    }
+
+    #[test]
+    fn load_path_dispatches_by_extension() {
+        let bm1 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demos/songs/song1.bm1");
+        let via_load_path = load_path(&bm1).unwrap();
+        assert!(matches!(via_load_path.source, SampleSource::Disk));
+        assert_eq!(via_load_path.composition.metadata.title, "Demo");
     }
 }

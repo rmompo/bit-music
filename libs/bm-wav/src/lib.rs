@@ -28,11 +28,27 @@ pub enum WavError {
 /// Decodes a `.wav` file (integer or float PCM, any bit depth) to a mono
 /// buffer normalized to `[-1.0, 1.0]`.
 pub fn load_wav(path: &Path) -> Result<AudioBuffer, WavError> {
-    let mut reader = hound::WavReader::open(path).map_err(|source| WavError::Read {
+    let reader = hound::WavReader::open(path).map_err(|source| WavError::Read {
         path: path.display().to_string(),
         source,
     })?;
+    decode(reader)
+}
 
+/// The same as [`load_wav`], but from bytes already in memory (e.g. a
+/// sample read out of a `.bmz` package) instead of a file on disk. `label`
+/// is only used to name the file in a resulting error.
+pub fn load_wav_bytes(bytes: &[u8], label: &str) -> Result<AudioBuffer, WavError> {
+    let reader =
+        hound::WavReader::new(std::io::Cursor::new(bytes)).map_err(|source| WavError::Read {
+            path: label.to_string(),
+            source,
+        })?;
+    decode(reader)
+}
+
+/// Shared decode step for [`load_wav`] and [`load_wav_bytes`].
+fn decode<R: std::io::Read>(mut reader: hound::WavReader<R>) -> Result<AudioBuffer, WavError> {
     let spec = reader.spec();
     let channels = spec.channels as usize;
 
@@ -62,6 +78,29 @@ pub fn check_wav(path: &Path) -> Result<(), WavError> {
             path: path.display().to_string(),
             source,
         })
+}
+
+/// The same as [`check_wav`], but on bytes already in memory. `label` is
+/// only used to name the file in a resulting error.
+pub fn check_wav_bytes(bytes: &[u8], label: &str) -> Result<(), WavError> {
+    hound::WavReader::new(std::io::Cursor::new(bytes))
+        .map(|_| ())
+        .map_err(|source| WavError::Read {
+            path: label.to_string(),
+            source,
+        })
+}
+
+/// A [`WavError`] for a sample that a [`SampleSource`](../bm_project/enum.SampleSource.html)
+/// could not find (e.g. missing from a `.bmz` package).
+pub fn missing(label: &str) -> WavError {
+    WavError::Read {
+        path: label.to_string(),
+        source: hound::Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found in the package",
+        )),
+    }
 }
 
 /// Writes `data` (mono, at `sample_rate`) as a 16-bit PCM `.wav` file,
@@ -112,6 +151,29 @@ mod tests {
         for (a, b) in original.iter().zip(loaded.data.iter()) {
             assert!((a - b).abs() < 1e-3, "expected {a}, got {b}");
         }
+    }
+
+    #[test]
+    fn bytes_variants_match_the_path_ones() {
+        let path = temp_wav("bytes-roundtrip");
+        let original = vec![-1.0, -0.5, 0.0, 0.5, 1.0];
+        write_wav(&path, &original, 44100).expect("write_wav should succeed");
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        check_wav_bytes(&bytes, "kick.wav").expect("check_wav_bytes should accept a valid file");
+        let loaded = load_wav_bytes(&bytes, "kick.wav").expect("load_wav_bytes should succeed");
+        assert_eq!(loaded.sample_rate, 44100);
+        assert_eq!(loaded.data.len(), original.len());
+
+        assert!(check_wav_bytes(b"not a wav file", "bad.wav").is_err());
+        assert!(load_wav_bytes(b"not a wav file", "bad.wav").is_err());
+    }
+
+    #[test]
+    fn missing_reports_the_label_and_is_not_found() {
+        let err = missing("samples/kick.wav");
+        assert!(err.to_string().contains("samples/kick.wav"));
     }
 
     #[test]
