@@ -1,6 +1,8 @@
-//! Area D: the arrangement. One row per track — a mute button and the track
-//! name on the left, a step grid on the right where every pattern is a
-//! filled block (colored by its sample, with its notes drawn inside).
+//! Area D: the arrangement. One row per track — its header on the left
+//! (mute, a color swatch and the name, over a row of view-mode buttons,
+//! always pinned to the top of the row) and a step grid on the right where
+//! every pattern is a filled block (colored by its sample, with its notes
+//! drawn inside, taller or shorter depending on the track's own view mode).
 //!
 //! Everything lives in a single 2D scroll area, so all tracks scroll
 //! together. The left column and the ruler are "pinned" by painting them at
@@ -13,8 +15,8 @@ use crate::fmt;
 use crate::i18n::{t, tf};
 use crate::grid;
 use crate::loader::Loaded;
-use crate::widgets::{paint_scope, IconButton, ICON_BUTTON_SIZE};
-use crate::view::{Selection, ViewState};
+use crate::widgets::{paint_scope, IconButton};
+use crate::view::{Selection, TrackViewMode, ViewState};
 
 const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
 /// Pixels kept between the left edge of the grid and the cursor when the
@@ -26,8 +28,14 @@ const SCOPE_COLOR: Color32 = Color32::from_rgba_premultiplied(45, 90, 115, 115);
 /// Width of the pinned TRACK column, in points.
 pub const LEFT_WIDTH: f32 = 176.0;
 const RULER_HEIGHT: f32 = 24.0;
-/// The smallest height of a track row, in points.
-const MIN_ROW_HEIGHT: f32 = 52.0;
+/// Height of each of the track header's two rows (mute/color/name, then the
+/// view-mode buttons). The header is always pinned to the top of the row,
+/// whatever the row's own height is; anything past it is left blank.
+const HEADER_ROW_HEIGHT: f32 = 24.0;
+const HEADER_HEIGHT: f32 = HEADER_ROW_HEIGHT * 2.0;
+/// The smallest height of a track row, in points: never less than the
+/// header needs.
+const MIN_ROW_HEIGHT: f32 = HEADER_HEIGHT;
 /// The tallest a track row may grow to.
 const MAX_ROW_HEIGHT: f32 = 240.0;
 const BLOCK_INSET: f32 = 4.0;
@@ -35,12 +43,14 @@ const BLOCK_INSET: f32 = 4.0;
 const BLOCK_LABEL_HEIGHT: f32 = 15.0;
 /// Space kept under the notes of a block.
 const BLOCK_BOTTOM_PAD: f32 = 3.0;
-/// The height of one semitone in the small note preview of a block. Every
-/// mark has this height, whatever the pattern, so the row height of the
-/// tracks is set to fit the widest range of pitches used.
-const MARK_HEIGHT: f32 = 4.0;
+/// Side of the small buttons in the header (mute, view mode).
+const MODE_BUTTON_SIZE: f32 = 20.0;
+/// Gap between the view-mode buttons.
+const MODE_BUTTON_GAP: f32 = 3.0;
+/// Side of the track's color indicator, next to its name.
+const COLOR_SWATCH_SIZE: f32 = 12.0;
 
-/// How tall the track rows are and how tall each note mark is.
+/// How tall a track's rows are and how tall each of its note marks is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackMetrics {
     pub row_height: f32,
@@ -48,15 +58,16 @@ pub struct TrackMetrics {
     pub mark_height: f32,
 }
 
-/// Sizes the tracks so that every note mark has the same height in every
-/// pattern: the rows are made as tall as the widest range of pitches
-/// (`max_rows` semitones) needs at [`MARK_HEIGHT`] each. Only if that would
-/// pass the maximum are the marks made thinner, all of them the same.
-pub fn track_metrics(max_rows: usize) -> TrackMetrics {
+/// Sizes one track's row so that every note mark in it has the same height:
+/// as tall as its widest range of pitches (`max_rows` semitones) needs at
+/// `target_mark_height` each (the track's view mode — see
+/// [`crate::view::TrackViewMode::mark_height`]). Only if that would pass the
+/// maximum are the marks made thinner, all of them the same.
+pub fn track_metrics(max_rows: usize, target_mark_height: f32) -> TrackMetrics {
     let fixed = 2.0 * BLOCK_INSET + BLOCK_LABEL_HEIGHT + BLOCK_BOTTOM_PAD;
     let rows = max_rows.max(1) as f32;
-    let row_height = (fixed + rows * MARK_HEIGHT).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
-    let mark_height = ((row_height - fixed) / rows).clamp(1.0, MARK_HEIGHT);
+    let row_height = (fixed + rows * target_mark_height).clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
+    let mark_height = ((row_height - fixed) / rows).clamp(1.0, target_mark_height);
     TrackMetrics { row_height, mark_height }
 }
 
@@ -76,20 +87,37 @@ pub fn show(
     let timeline = &l.timeline;
     let spb = (l.project.composition.metadata.steps_per_beat as usize).max(1);
     let sw = view.step_width;
-    // The widest range of pitches among the patterns on the tracks decides
-    // the height of every row.
-    let max_rows = timeline
+    // Each track is sized on its own: the widest range of pitches among
+    // *its* patterns, at the mark height its own view mode asks for.
+    let metrics: Vec<TrackMetrics> = timeline
         .tracks
         .iter()
-        .flat_map(|t| &t.clips)
-        .filter_map(|c| view.grids.get(&c.pattern_id))
-        .map(|g| g.chromatic.len())
-        .max()
-        .unwrap_or(0);
-    let TrackMetrics { row_height, mark_height } = track_metrics(max_rows);
+        .enumerate()
+        .map(|(ti, t)| {
+            let max_rows = t
+                .clips
+                .iter()
+                .filter_map(|c| view.grids.get(&c.pattern_id))
+                .map(|g| g.chromatic.len())
+                .max()
+                .unwrap_or(0);
+            let mode = view.track_view_modes.get(ti).copied().unwrap_or_default();
+            track_metrics(max_rows, mode.mark_height())
+        })
+        .collect();
+    // Cumulative offset of the top of each row, relative to `rows_top`;
+    // `row_tops[tracks.len()]` is the total height of every row together.
+    let mut row_tops = Vec::with_capacity(metrics.len() + 1);
+    let mut acc = 0.0;
+    row_tops.push(0.0);
+    for m in &metrics {
+        acc += m.row_height;
+        row_tops.push(acc);
+    }
+    let total_rows_height = acc;
     let content = Vec2::new(
         LEFT_WIDTH + timeline.total_steps as f32 * sw,
-        RULER_HEIGHT + timeline.tracks.len() as f32 * row_height,
+        RULER_HEIGHT + total_rows_height,
     );
 
     let mut clicked: Option<String> = None;
@@ -119,15 +147,15 @@ pub fn show(
                 .min(timeline.total_steps);
             let x_of = |step: usize| origin.x + LEFT_WIDTH + step as f32 * sw;
             let rows_top = origin.y + RULER_HEIGHT;
-            let rows_bottom = rows_top + timeline.tracks.len() as f32 * row_height;
+            let rows_bottom = rows_top + total_rows_height;
             let grid_right = origin.x + width;
 
             // 1. Row backgrounds.
             for i in 0..timeline.tracks.len() {
-                let y = rows_top + i as f32 * row_height;
+                let y = rows_top + row_tops[i];
                 let fill = if i % 2 == 0 { visuals.extreme_bg_color } else { visuals.faint_bg_color };
                 painter.rect_filled(
-                    Rect::from_min_max(Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, y + row_height)),
+                    Rect::from_min_max(Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, rows_top + row_tops[i + 1])),
                     0.0,
                     fill,
                 );
@@ -158,14 +186,15 @@ pub fn show(
 
             // 4. Row separators.
             for i in 0..=timeline.tracks.len() {
-                let y = rows_top + i as f32 * row_height;
+                let y = rows_top + row_tops[i];
                 painter.line_segment([Pos2::new(origin.x + LEFT_WIDTH, y), Pos2::new(grid_right, y)], strong_line);
             }
 
             // 5. Pattern blocks.
             for (ti, track) in timeline.tracks.iter().enumerate() {
                 let muted = view.muted[ti];
-                let y = rows_top + ti as f32 * row_height;
+                let y = rows_top + row_tops[ti];
+                let TrackMetrics { row_height, mark_height } = metrics[ti];
                 for clip in &track.clips {
                     let clip_end = clip.start_step + clip.len_steps;
                     if clip_end < step_lo || clip.start_step > step_hi {
@@ -250,40 +279,81 @@ pub fn show(
             }
 
             // 6. Pinned left column (x follows the horizontal scroll offset).
+            // Each track's header is two rows — mute, color and name, then
+            // the view-mode buttons — always pinned to the top of the cell,
+            // whatever its height: any extra room stays blank below them.
+            // The oscilloscope is painted faintly behind the whole cell.
             let x_pin = origin.x + viewport.min.x;
             for (ti, track) in timeline.tracks.iter().enumerate() {
-                let y = rows_top + ti as f32 * row_height;
+                let y = rows_top + row_tops[ti];
+                let row_height = metrics[ti].row_height;
                 let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, row_height));
                 painter.rect_filled(cell, 0.0, visuals.panel_fill);
                 if let Some(scope) = scopes.get(ti) {
-                    // Faint, behind the button and the name.
+                    // Faint, behind the header.
                     paint_scope(&painter, cell, scope, SCOPE_COLOR);
                 }
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
-                let button = Rect::from_min_size(
-                    Pos2::new(cell.min.x + 8.0, y + (row_height - ICON_BUTTON_SIZE) / 2.0),
-                    Vec2::splat(ICON_BUTTON_SIZE),
-                );
+                // Row 1: mute, the track's color, then its name.
+                let row1_mid_y = cell.min.y + HEADER_ROW_HEIGHT / 2.0;
                 let muted = view.muted[ti];
+                let mute_button = Rect::from_min_size(
+                    Pos2::new(cell.min.x + 8.0, row1_mid_y - MODE_BUTTON_SIZE / 2.0),
+                    Vec2::splat(MODE_BUTTON_SIZE),
+                );
                 let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
                 let response = ui
-                    .put(button, IconButton::new(icon).selected(muted))
+                    .put(mute_button, IconButton::new(icon).selected(muted).size(MODE_BUTTON_SIZE))
                     .on_hover_text(if muted { t("tracks.unmute") } else { t("tracks.mute") });
                 if response.clicked() {
                     view.muted[ti] = !muted;
                 }
 
-                let name_color = if view.muted[ti] { text_color.gamma_multiply(0.5) } else { text_color };
-                painter
-                    .with_clip_rect(cell.shrink2(Vec2::new(0.0, 0.0)))
-                    .text(
-                        Pos2::new(button.max.x + 8.0, y + row_height / 2.0),
-                        Align2::LEFT_CENTER,
-                        &track.id,
-                        FontId::proportional(14.0),
-                        name_color,
+                let swatch = Rect::from_min_size(
+                    Pos2::new(mute_button.max.x + 6.0, row1_mid_y - COLOR_SWATCH_SIZE / 2.0),
+                    Vec2::splat(COLOR_SWATCH_SIZE),
+                );
+                // The color of the track's first pattern's sample: a fixed,
+                // representative color even when later clips use others.
+                let track_color = track
+                    .clips
+                    .first()
+                    .map(|c| view.pattern_color(l, &c.pattern_id))
+                    .unwrap_or(Color32::GRAY);
+                painter.rect_filled(swatch, 2.0, track_color.gamma_multiply(if muted { 0.4 } else { 1.0 }));
+
+                let name_color = if muted { text_color.gamma_multiply(0.5) } else { text_color };
+                painter.with_clip_rect(cell).text(
+                    Pos2::new(swatch.max.x + 6.0, row1_mid_y),
+                    Align2::LEFT_CENTER,
+                    &track.id,
+                    FontId::proportional(14.0),
+                    name_color,
+                );
+
+                // Row 2: the view-mode buttons.
+                let row2_mid_y = cell.min.y + HEADER_ROW_HEIGHT + HEADER_ROW_HEIGHT / 2.0;
+                let mut bx = cell.min.x + 8.0;
+                for mode in TrackViewMode::ALL {
+                    let button = Rect::from_min_size(
+                        Pos2::new(bx, row2_mid_y - MODE_BUTTON_SIZE / 2.0),
+                        Vec2::splat(MODE_BUTTON_SIZE),
                     );
+                    let selected = view.track_view_modes[ti] == mode;
+                    let tooltip = match mode {
+                        TrackViewMode::Compact => t("tracks.view_compact"),
+                        TrackViewMode::Standard => t("tracks.view_standard"),
+                        TrackViewMode::Full => t("tracks.view_full"),
+                    };
+                    let response = ui
+                        .put(button, IconButton::new(mode.icon()).selected(selected).size(MODE_BUTTON_SIZE))
+                        .on_hover_text(tooltip);
+                    if response.clicked() {
+                        view.track_view_modes[ti] = mode;
+                    }
+                    bx += MODE_BUTTON_SIZE + MODE_BUTTON_GAP;
+                }
             }
             painter.line_segment(
                 [Pos2::new(x_pin + LEFT_WIDTH, rows_top.max(origin.y + viewport.min.y)), Pos2::new(x_pin + LEFT_WIDTH, rows_bottom)],
@@ -379,23 +449,80 @@ mod tests {
 
     #[test]
     fn the_tracks_are_as_tall_as_the_widest_range_needs_and_every_mark_is_alike() {
+        let standard = TrackViewMode::Standard.mark_height();
         // No notes: the minimum height, marks at their normal height.
-        let none = track_metrics(0);
+        let none = track_metrics(0, standard);
         assert_eq!(none.row_height, MIN_ROW_HEIGHT);
-        assert_eq!(none.mark_height, MARK_HEIGHT);
+        assert_eq!(none.mark_height, standard);
         // One octave: 26 points of frame and label + 12 semitones of 4 points.
-        let one = track_metrics(12);
+        let one = track_metrics(12, standard);
         assert_eq!(one.row_height, 74.0);
-        assert_eq!(one.mark_height, MARK_HEIGHT);
+        assert_eq!(one.mark_height, standard);
         // Two octaves: taller rows, the same mark height.
-        let two = track_metrics(24);
+        let two = track_metrics(24, standard);
         assert_eq!(two.row_height, 122.0);
-        assert_eq!(two.mark_height, MARK_HEIGHT);
+        assert_eq!(two.mark_height, standard);
         // A huge range hits the maximum row height: the marks get thinner,
         // but they still all have the same height, and they fit.
-        let huge = track_metrics(120);
+        let huge = track_metrics(120, standard);
         assert_eq!(huge.row_height, MAX_ROW_HEIGHT);
-        assert!(huge.mark_height < MARK_HEIGHT && huge.mark_height >= 1.0);
+        assert!(huge.mark_height < standard && huge.mark_height >= 1.0);
         assert!(120.0 * huge.mark_height <= MAX_ROW_HEIGHT - 26.0 + 1e-3);
+    }
+
+    #[test]
+    fn a_wider_target_mark_height_gives_a_taller_row_for_the_same_range() {
+        let compact = track_metrics(12, TrackViewMode::Compact.mark_height());
+        let standard = track_metrics(12, TrackViewMode::Standard.mark_height());
+        let full = track_metrics(12, TrackViewMode::Full.mark_height());
+        assert!(compact.row_height < standard.row_height);
+        assert!(standard.row_height < full.row_height);
+    }
+
+    fn demo() -> Box<Loaded> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1");
+        match load_blocking(&path) {
+            LoadOutcome::Loaded(l) => l,
+            LoadOutcome::Failed { message, .. } => panic!("demo should load: {message}"),
+        }
+    }
+
+    #[test]
+    fn each_track_is_sized_independently_from_its_own_view_mode() {
+        let l = demo();
+        let mut view = ViewState::new(&l);
+        assert!(l.timeline.tracks.len() >= 2, "the demo needs at least two tracks for this test");
+        view.track_view_modes[0] = TrackViewMode::Full;
+        view.track_view_modes[1] = TrackViewMode::Compact;
+        egui::__run_test_ui(|ui| show(ui, &l, &mut view, None, false, &[]));
+
+        // Recomputed the same way `show` does, from each track's own clips.
+        let heights: Vec<f32> = l
+            .timeline
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(ti, t)| {
+                let max_rows = t
+                    .clips
+                    .iter()
+                    .filter_map(|c| view.grids.get(&c.pattern_id))
+                    .map(|g| g.chromatic.len())
+                    .max()
+                    .unwrap_or(0);
+                track_metrics(max_rows, view.track_view_modes[ti].mark_height()).row_height
+            })
+            .collect();
+        assert!(heights[0] > heights[1], "a Full track should be taller than a Compact one: {heights:?}");
+    }
+
+    #[test]
+    fn draws_with_a_mix_of_view_modes_without_panicking() {
+        let l = demo();
+        let mut view = ViewState::new(&l);
+        for (ti, mode) in TrackViewMode::ALL.iter().cycle().take(l.timeline.tracks.len()).enumerate() {
+            view.track_view_modes[ti] = *mode;
+        }
+        egui::__run_test_ui(|ui| show(ui, &l, &mut view, None, false, &[]));
     }
 }

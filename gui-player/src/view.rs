@@ -4,9 +4,10 @@
 use std::collections::HashMap;
 
 use eframe::egui::Color32;
+use egui_phosphor::regular;
 
 use crate::config::DividerLimits;
-use crate::grid::PatternGrid;
+use crate::grid::{PatternGrid, CELL_HEIGHT};
 use crate::loader::Loaded;
 use crate::palette;
 
@@ -28,6 +29,44 @@ pub enum ListTab {
     Patterns,
 }
 
+/// How tall a track's pattern blocks are drawn, chosen per track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TrackViewMode {
+    /// Small blocks: fewer points per note mark.
+    Compact,
+    /// The normal size.
+    #[default]
+    Standard,
+    /// Tall blocks, marks as tall as the piano roll in the properties panel.
+    Full,
+}
+
+impl TrackViewMode {
+    pub const ALL: [TrackViewMode; 3] = [TrackViewMode::Compact, TrackViewMode::Standard, TrackViewMode::Full];
+
+    /// Height, in points, of one semitone's note mark in this mode. The
+    /// track's row is then sized to fit its widest pitch range at this
+    /// height (see `arrangement::track_metrics`).
+    pub fn mark_height(self) -> f32 {
+        match self {
+            TrackViewMode::Compact => 2.0,
+            TrackViewMode::Standard => 4.0,
+            // Same mark height as a row of the properties panel's piano
+            // roll, so "full" reads like a small version of it.
+            TrackViewMode::Full => CELL_HEIGHT,
+        }
+    }
+
+    /// The icon of this mode's button in the track header.
+    pub fn icon(self) -> &'static str {
+        match self {
+            TrackViewMode::Compact => regular::ARROWS_IN_LINE_VERTICAL,
+            TrackViewMode::Standard => regular::ARROWS_VERTICAL,
+            TrackViewMode::Full => regular::ARROWS_OUT_LINE_VERTICAL,
+        }
+    }
+}
+
 pub const DEFAULT_STEP_WIDTH: f32 = 16.0;
 /// Zoom range of the arrangement, in pixels per step.
 pub const STEP_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 6.0..=48.0;
@@ -40,6 +79,9 @@ pub struct ViewState {
     pub tab: ListTab,
     /// One flag per track, in arrangement order.
     pub muted: Vec<bool>,
+    /// One view mode per track, in arrangement order: how tall its pattern
+    /// blocks are drawn.
+    pub track_view_modes: Vec<TrackViewMode>,
     /// Horizontal zoom of the arrangement, in pixels per step.
     pub step_width: f32,
     /// Loop playback when it reaches the end.
@@ -73,6 +115,7 @@ impl ViewState {
             selected_pattern: None,
             tab: ListTab::default(),
             muted: vec![false; l.timeline.tracks.len()],
+            track_view_modes: vec![TrackViewMode::default(); l.timeline.tracks.len()],
             step_width: DEFAULT_STEP_WIDTH,
             looping: false,
             volume: 1.0,
@@ -124,5 +167,34 @@ impl ViewState {
             .and_then(|p| self.sample_colors.get(&p.sample))
             .copied()
             .unwrap_or(Color32::GRAY)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{load_blocking, LoadOutcome};
+    use std::path::Path;
+
+    #[test]
+    fn track_view_modes_grow_taller_from_compact_to_full() {
+        assert!(TrackViewMode::Compact.mark_height() < TrackViewMode::Standard.mark_height());
+        assert!(TrackViewMode::Standard.mark_height() < TrackViewMode::Full.mark_height());
+        // Every mode has a distinct icon.
+        let icons: Vec<&str> = TrackViewMode::ALL.iter().map(|m| m.icon()).collect();
+        assert_eq!(icons.len(), 3);
+        assert_ne!(icons[0], icons[1]);
+        assert_ne!(icons[1], icons[2]);
+    }
+
+    #[test]
+    fn every_track_starts_unmuted_in_standard_view() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demos/songs/song1.bm1");
+        let LoadOutcome::Loaded(l) = load_blocking(&path) else {
+            panic!("demo should load");
+        };
+        let view = ViewState::new(&l);
+        assert_eq!(view.track_view_modes.len(), l.timeline.tracks.len());
+        assert!(view.track_view_modes.iter().all(|m| *m == TrackViewMode::Standard));
     }
 }
