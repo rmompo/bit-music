@@ -116,6 +116,11 @@ struct Core {
     /// One interleaved buffer per track, [`mix_channels`](Self::mix_channels)
     /// channels each, already at the device sample rate.
     tracks: Vec<Vec<f32>>,
+    /// Each track's own channel count before it was upmixed to
+    /// `mix_channels` to fit alongside the others (parallel to `tracks`).
+    /// A scope truncates to this so a mono track shows one trace, not
+    /// `mix_channels` identical copies of it.
+    track_channels: Vec<usize>,
     /// Every track and preview buffer is at this many channels (the widest
     /// among them all — see [`Engine::with_previews`], which upmixes a
     /// narrower one to match): `1` behaves exactly as before.
@@ -124,6 +129,9 @@ struct Core {
     /// Short one-shot sounds (sample previews), already at the device rate
     /// and at `mix_channels` channels.
     previews: Vec<Vec<f32>>,
+    /// Each preview's own channel count before upmixing (parallel to
+    /// `previews`) — see `track_channels`.
+    preview_channels: Vec<usize>,
     /// Next frame of each preview, or `IDLE`.
     preview_pos: Vec<AtomicUsize>,
     /// Master volume as `f32` bits (1.0 = unchanged).
@@ -146,9 +154,13 @@ struct Core {
 impl Core {
     /// `tracks` and `previews` must already be interleaved at
     /// `mix_channels` channels each (narrower buffers upmixed by the
-    /// caller — see [`Engine::with_previews`]).
-    fn new(tracks: Vec<Vec<f32>>, previews: Vec<Vec<f32>>, mix_channels: usize) -> Self {
+    /// caller — see [`Engine::with_previews`]); each pairs that data with
+    /// its buffer's own native channel count from before the upmix, kept
+    /// only so a scope can show the right number of traces.
+    fn new(tracks: Vec<(Vec<f32>, usize)>, previews: Vec<(Vec<f32>, usize)>, mix_channels: usize) -> Self {
         let mix_channels = mix_channels.clamp(1, MAX_MIX_CHANNELS);
+        let (tracks, track_channels): (Vec<Vec<f32>>, Vec<usize>) = tracks.into_iter().unzip();
+        let (previews, preview_channels): (Vec<Vec<f32>>, Vec<usize>) = previews.into_iter().unzip();
         let len = tracks.iter().map(|t| t.len() / mix_channels).max().unwrap_or(0);
 
         // Same normalization the offline mix uses: one fixed gain from the
@@ -166,9 +178,11 @@ impl Core {
         let preview_pos = previews.iter().map(|_| AtomicUsize::new(IDLE)).collect();
         Self {
             tracks,
+            track_channels,
             mix_channels,
             muted,
             previews,
+            preview_channels,
             preview_pos,
             volume: AtomicU32::new(1.0f32.to_bits()),
             len,
@@ -249,6 +263,33 @@ impl Core {
         }
 
         self.position.store(pos, Ordering::Relaxed);
+    }
+
+    /// One [`scope_window`] per *native* channel of track `index` (see
+    /// [`track_channels`](Self::track_channels)), centered at `position` —
+    /// a mono track shows one trace even though it was upmixed to
+    /// `mix_channels` internally to sit alongside a wider one. Empty if
+    /// `index` is out of range.
+    fn track_scope_multi(&self, index: usize, position: usize, half: usize, points: usize) -> Vec<Vec<f32>> {
+        let Some(track) = self.tracks.get(index) else {
+            return Vec::new();
+        };
+        let native = self.track_channels.get(index).copied().unwrap_or(self.mix_channels);
+        let mut channels = scope_channels(track, self.mix_channels, position, half, points, self.gain);
+        channels.truncate(native);
+        channels
+    }
+
+    /// The same as [`track_scope_multi`](Self::track_scope_multi), for
+    /// preview `index`.
+    fn preview_scope_multi(&self, index: usize, position: usize, half: usize, points: usize) -> Vec<Vec<f32>> {
+        let Some(preview) = self.previews.get(index) else {
+            return Vec::new();
+        };
+        let native = self.preview_channels.get(index).copied().unwrap_or(self.mix_channels);
+        let mut channels = scope_channels(preview, self.mix_channels, position, half, points, 1.0);
+        channels.truncate(native);
+        channels
     }
 
     fn preview_active(&self, index: usize) -> bool {
@@ -333,8 +374,10 @@ impl Engine {
             };
             dsp::upmix(&resampled, t.channels() as usize, mix_channels)
         };
-        let device_tracks: Vec<Vec<f32>> = tracks.iter().map(|t| to_device(t)).collect();
-        let device_previews: Vec<Vec<f32>> = previews.iter().map(|t| to_device(t)).collect();
+        let device_tracks: Vec<(Vec<f32>, usize)> =
+            tracks.iter().map(|t| (to_device(t), t.channels() as usize)).collect();
+        let device_previews: Vec<(Vec<f32>, usize)> =
+            previews.iter().map(|t| (to_device(t), t.channels() as usize)).collect();
 
         let core = Arc::new(Core::new(device_tracks, device_previews, mix_channels));
 
@@ -432,22 +475,15 @@ impl Engine {
 
     /// The same as [`track_scope`](Self::track_scope), but every channel
     /// (one inner `Vec` per channel, in source order; a mono track gives
-    /// exactly one, matching `track_scope`).
+    /// exactly one, matching `track_scope` — even when it plays alongside
+    /// a wider track and was upmixed to fit the shared mix internally, its
+    /// scope still shows one trace, not several identical copies of it).
     pub fn track_scope_multi(&self, index: usize, points: usize) -> Vec<Vec<f32>> {
         if !self.is_playing() || self.is_muted(index) {
             return Vec::new();
         }
-        let Some(track) = self.core.tracks.get(index) else {
-            return Vec::new();
-        };
-        scope_channels(
-            track,
-            self.core.mix_channels,
-            self.core.current_position(),
-            self.scope_half(),
-            points,
-            self.core.gain,
-        )
+        self.core
+            .track_scope_multi(index, self.core.current_position(), self.scope_half(), points)
     }
 
     /// The same for preview `index`: empty unless it is sounding. Not
@@ -466,7 +502,7 @@ impl Engine {
         if position == IDLE {
             return Vec::new();
         }
-        scope_channels(&self.core.previews[index], self.core.mix_channels, position, self.scope_half(), points, 1.0)
+        self.core.preview_scope_multi(index, position, self.scope_half(), points)
     }
 
     fn scope_half(&self) -> usize {
@@ -549,10 +585,22 @@ mod tests {
     use super::*;
 
     fn core(tracks: Vec<Vec<f32>>) -> Core {
+        let tracks = tracks.into_iter().map(|t| (t, 1)).collect();
         Core::new(tracks, Vec::new(), 1)
     }
 
+    /// Every track passed in is at `mix_channels` channels natively (no
+    /// upmixing involved) — see [`core_with_native_channels`] for a mix
+    /// where a narrower track's native count differs from the shared one.
     fn core_multi(tracks: Vec<Vec<f32>>, mix_channels: usize) -> Core {
+        let tracks = tracks.into_iter().map(|t| (t, mix_channels)).collect();
+        Core::new(tracks, Vec::new(), mix_channels)
+    }
+
+    /// Tracks paired with their own native channel count, which may be
+    /// narrower than `mix_channels` (already upmixed to it, as
+    /// `Engine::with_previews` would do).
+    fn core_with_native_channels(tracks: Vec<(Vec<f32>, usize)>, mix_channels: usize) -> Core {
         Core::new(tracks, Vec::new(), mix_channels)
     }
 
@@ -672,7 +720,7 @@ mod tests {
 
     #[test]
     fn a_preview_sounds_once_while_the_transport_is_paused() {
-        let c = Core::new(vec![vec![0.0; 8]], vec![vec![0.1, 0.2]], 1);
+        let c = Core::new(vec![(vec![0.0; 8], 1)], vec![(vec![0.1, 0.2], 1)], 1);
         // Idle until triggered.
         assert_eq!(block(&c, 2, 1), vec![0.0, 0.0]);
         c.preview_pos[0].store(0, Ordering::Relaxed);
@@ -688,7 +736,7 @@ mod tests {
 
     #[test]
     fn a_preview_is_mixed_with_the_transport_and_never_clips() {
-        let c = Core::new(vec![vec![0.5; 2]], vec![vec![0.75; 2]], 1);
+        let c = Core::new(vec![(vec![0.5; 2], 1)], vec![(vec![0.75; 2], 1)], 1);
         c.playing.store(true, Ordering::Relaxed);
         c.preview_pos[0].store(0, Ordering::Relaxed);
         assert_eq!(block(&c, 1, 1), vec![1.0]);
@@ -732,5 +780,38 @@ mod tests {
         let c = core_multi(vec![vec![0.25; 8], vec![0.25; 8]], 1);
         c.playing.store(true, Ordering::Relaxed);
         assert_eq!(block(&c, 2, 2), vec![0.5, 0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn a_mono_track_s_scope_stays_one_trace_even_upmixed_alongside_a_stereo_one() {
+        // Track 0 is mono, upmixed to 2 channels (duplicated L=R) to sit in
+        // the same mix as track 1, which is genuinely stereo. Regression
+        // test for a bug where every track's scope reported mix_channels
+        // traces, so a mono sample looked stereo just because something
+        // else in the composition was.
+        let mono: Vec<f32> = (0..8).flat_map(|i| [i as f32 * 0.1; 2]).collect(); // duplicated L=R
+        let stereo: Vec<f32> = (0..4).flat_map(|i| [i as f32 * 0.1, -(i as f32) * 0.1]).collect();
+        let c = core_with_native_channels(vec![(mono, 1), (stereo, 2)], 2);
+
+        let mono_scope = c.track_scope_multi(0, 0, 4, 4);
+        assert_eq!(mono_scope.len(), 1, "a mono track must show exactly one trace");
+
+        let stereo_scope = c.track_scope_multi(1, 0, 4, 4);
+        assert_eq!(stereo_scope.len(), 2, "a stereo track must show both channels");
+        // The two channels are genuinely different (not a duplicated mono).
+        assert_ne!(stereo_scope[0], stereo_scope[1]);
+
+        // Out of range: empty, not a panic.
+        assert!(c.track_scope_multi(9, 0, 4, 4).is_empty());
+    }
+
+    #[test]
+    fn a_mono_preview_s_scope_stays_one_trace_even_upmixed_alongside_a_stereo_one() {
+        let mono: Vec<f32> = (0..8).flat_map(|i| [i as f32 * 0.1; 2]).collect();
+        let stereo: Vec<f32> = (0..4).flat_map(|i| [i as f32 * 0.1, -(i as f32) * 0.1]).collect();
+        let c = Core::new(Vec::new(), vec![(mono, 1), (stereo, 2)], 2);
+
+        assert_eq!(c.preview_scope_multi(0, 0, 4, 4).len(), 1);
+        assert_eq!(c.preview_scope_multi(1, 0, 4, 4).len(), 2);
     }
 }
