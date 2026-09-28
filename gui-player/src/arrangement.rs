@@ -23,6 +23,14 @@ const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
 /// view scrolls to follow it.
 const FOLLOW_MARGIN: f32 = 60.0;
 
+/// A pattern clip's opacity: always translucent, at one of three levels
+/// depending on its track's state — the more "present" the state, the more
+/// visible the card. An enabled track is the most visible, a muted one the
+/// least, with a loop repetition in between.
+const CLIP_OPACITY_ENABLED: f32 = 0.5;
+const CLIP_OPACITY_LOOP: f32 = 0.3;
+const CLIP_OPACITY_MUTED: f32 = 0.1;
+
 /// Color of the live oscilloscope behind a track's name (translucent).
 const SCOPE_COLOR: Color32 = Color32::from_rgba_premultiplied(45, 90, 115, 115);
 /// Width of the pinned TRACK column, in points.
@@ -49,6 +57,15 @@ const MODE_BUTTON_SIZE: f32 = 20.0;
 const MODE_BUTTON_GAP: f32 = 3.0;
 /// Side of the track's color indicator, next to its name.
 const COLOR_SWATCH_SIZE: f32 = 12.0;
+
+/// `color`, blended towards white by `amount` (`0.0` = unchanged, `1.0` =
+/// white), alpha untouched. Used for the selected-pattern outline: the
+/// pattern's own color, but brighter, instead of an unrelated accent color.
+fn brighten(color: Color32, amount: f32) -> Color32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let lerp = |c: u8| (c as f32 + (255.0 - c as f32) * amount).round() as u8;
+    Color32::from_rgba_unmultiplied(lerp(color.r()), lerp(color.g()), lerp(color.b()), color.a())
+}
 
 /// How tall a track's rows are and how tall each of its note marks is.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -207,12 +224,12 @@ pub fn show(
                     );
                     let base = view.pattern_color(l, &clip.pattern_id);
                     let strength = match (muted, clip.is_repeat) {
-                        (true, _) => 0.25,
-                        (false, true) => 0.55,
-                        (false, false) => 0.9,
+                        (true, _) => CLIP_OPACITY_MUTED,
+                        (false, true) => CLIP_OPACITY_LOOP,
+                        (false, false) => CLIP_OPACITY_ENABLED,
                     };
-                    painter.rect_filled(block, 4.0, base.gamma_multiply(strength));
-                    painter.rect_stroke(block, 4.0, Stroke::new(1.0, base), StrokeKind::Inside);
+                    painter.rect_filled(block, 0.0, base.gamma_multiply(strength));
+                    painter.rect_stroke(block, 0.0, Stroke::new(1.0, base), StrokeKind::Inside);
 
                     if let Some(g) = view.grids.get(&clip.pattern_id) {
                         let notes_area = Rect::from_min_max(
@@ -243,7 +260,7 @@ pub fn show(
                         .text(block.min + Vec2::new(4.0, 2.0), Align2::LEFT_TOP, label, FontId::proportional(11.0), Color32::WHITE);
 
                     if view.selected_pattern.as_deref() == Some(clip.pattern_id.as_str()) {
-                        painter.rect_stroke(block, 4.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+                        painter.rect_stroke(block, 0.0, Stroke::new(2.0, brighten(base, 0.6)), StrokeKind::Inside);
                     }
 
                     let response = ui.interact(block, ui.id().with(("clip", ti, clip.column)), Sense::click());
@@ -441,6 +458,21 @@ mod tests {
     use super::*;
     use crate::loader::{load_blocking, LoadOutcome};
     use std::path::Path;
+
+    #[test]
+    fn brighten_moves_toward_white_and_keeps_alpha() {
+        let color = Color32::from_rgb(80, 190, 190);
+        assert_eq!(brighten(color, 0.0), color);
+        assert_eq!(brighten(color, 1.0), Color32::from_rgba_unmultiplied(255, 255, 255, 255));
+        let half = brighten(color, 0.5);
+        assert!(half.r() > color.r() && half.r() < 255);
+        assert!(half.g() > color.g() && half.g() < 255);
+        assert!(half.b() > color.b() && half.b() < 255);
+        assert_eq!(half.a(), color.a());
+        // Clamped, not panicking, on out-of-range input.
+        assert_eq!(brighten(color, 2.0), brighten(color, 1.0));
+        assert_eq!(brighten(color, -1.0), color);
+    }
 
     #[test]
     fn draws_the_demo_arrangement_without_panicking_at_several_zooms() {
