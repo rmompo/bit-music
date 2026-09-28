@@ -53,15 +53,25 @@ fn time(i: usize) -> f32 {
 
 /// Applies a linear fade-out over the last `fade_seconds` (so no sample
 /// ends with a click) and scales the buffer to the given absolute peak.
-fn finish(mut data: Vec<f32>, peak: f32, fade_seconds: f32) -> Vec<f32> {
-    let fade = frames(fade_seconds).min(data.len());
-    let len = data.len();
-    for (k, v) in data[len - fade..].iter_mut().enumerate() {
-        *v *= 1.0 - (k as f32 + 1.0) / fade as f32;
+/// `data` is interleaved with `channels` channels (`1` for mono); the fade
+/// and the peak both apply per frame, across every channel together, so a
+/// stereo sample's image is never skewed.
+fn finish(mut data: Vec<f32>, target_peak: f32, fade_seconds: f32, channels: usize) -> Vec<f32> {
+    let channels = channels.max(1);
+    let total_frames = data.len() / channels;
+    let fade_frames = frames(fade_seconds).min(total_frames);
+    let fade_start = total_frames - fade_frames;
+
+    for frame in fade_start..total_frames {
+        let factor = 1.0 - ((frame - fade_start) as f32 + 1.0) / fade_frames as f32;
+        for ch in 0..channels {
+            data[frame * channels + ch] *= factor;
+        }
     }
+
     let current = data.iter().fold(0.0f32, |m, v| m.max(v.abs()));
     if current > 0.0 {
-        let gain = peak / current;
+        let gain = target_peak / current;
         data.iter_mut().for_each(|v| *v *= gain);
     }
     data
@@ -81,7 +91,7 @@ fn kick() -> Vec<f32> {
             body + click
         })
         .collect();
-    finish(data, 0.9, 0.02)
+    finish(data, 0.9, 0.02, 1)
 }
 
 /// Snare: a noise burst (crudely high-passed) over two short tones.
@@ -100,7 +110,7 @@ fn snare() -> Vec<f32> {
             snap + tone
         })
         .collect();
-    finish(data, 0.8, 0.02)
+    finish(data, 0.8, 0.02, 1)
 }
 
 /// Closed hi-hat: very short, strongly high-passed noise plus a few
@@ -121,7 +131,7 @@ fn hihat() -> Vec<f32> {
             (high * 0.25 + metal * 0.12) * (-t / 0.022).exp()
         })
         .collect();
-    finish(data, 0.6, 0.015)
+    finish(data, 0.6, 0.015, 1)
 }
 
 /// Electric piano at C3: two-operator FM whose modulation index decays (a
@@ -140,23 +150,39 @@ fn epiano() -> Vec<f32> {
             (carrier + tine) * envelope
         })
         .collect();
-    finish(data, 0.8, 0.1)
+    finish(data, 0.8, 0.1, 1)
 }
 
-/// Saxophone-like lead at C3: the first twelve harmonics shaped by two
-/// broad "reed" resonances, gentle delayed vibrato, a little breath noise
-/// and a soft attack/release.
+/// Saxophone-like lead at C3, in stereo: the first twelve harmonics shaped
+/// by two broad "reed" resonances, gentle delayed vibrato, a little breath
+/// noise and a soft attack/release. The right channel runs a couple of
+/// cents sharp of the left (its own, independently accumulated phase) —
+/// the classic gentle chorused width of a doubled lead, not a bare
+/// duplicate: summed to mono the two nearly cancel the difference back
+/// out, so the pitch a mono downmix hears is still exactly C3.
 fn sax() -> Vec<f32> {
     let mut noise = Noise::new(0x5341_5800);
     let mut breath = 0.0f32;
-    let mut phase = 0.0f32;
+    let mut phase = [0.0f32; 2];
+    // Right channel a few cents sharp: 2^(2/1200).
+    let detune = [1.0f32, 2f32.powf(2.0 / 1200.0)];
     let total = 1.2f32;
-    let data = (0..frames(total))
-        .map(|i| {
-            let t = time(i);
-            let vibrato_depth = ((t - 0.15) / 0.3).clamp(0.0, 1.0);
-            let vibrato = 1.0 + 0.004 * vibrato_depth * (TAU * 5.5 * t).sin();
-            phase += TAU * C3_HZ * vibrato / SAMPLE_RATE as f32;
+
+    let mut data = Vec::with_capacity(frames(total) * 2);
+    for i in 0..frames(total) {
+        let t = time(i);
+        let vibrato_depth = ((t - 0.15) / 0.3).clamp(0.0, 1.0);
+        let vibrato = 1.0 + 0.004 * vibrato_depth * (TAU * 5.5 * t).sin();
+
+        // Breath noise and the envelope are shared: only the tone's pitch
+        // differs between channels, as with a real doubled take.
+        breath += 0.15 * (noise.next() - breath); // low-passed noise
+        let attack = (t / 0.05).clamp(0.0, 1.0);
+        let release = ((total - t) / 0.2).clamp(0.0, 1.0);
+        let envelope = attack * release * (1.0 + 0.03 * (TAU * 4.7 * t).sin());
+
+        for (ch, phase) in phase.iter_mut().enumerate() {
+            *phase += TAU * C3_HZ * vibrato * detune[ch] / SAMPLE_RATE as f32;
 
             let mut tone = 0.0f32;
             for k in 1..=12u32 {
@@ -164,27 +190,23 @@ fn sax() -> Vec<f32> {
                 let resonance = 1.0
                     + 1.8 * (-((freq - 900.0) / 500.0).powi(2)).exp()
                     + 0.8 * (-((freq - 1_800.0) / 700.0).powi(2)).exp();
-                tone += (k as f32 * phase).sin() * resonance / (k as f32).powf(0.9);
+                tone += (k as f32 * *phase).sin() * resonance / (k as f32).powf(0.9);
             }
-
-            breath += 0.15 * (noise.next() - breath); // low-passed noise
-            let attack = (t / 0.05).clamp(0.0, 1.0);
-            let release = ((total - t) / 0.2).clamp(0.0, 1.0);
-            let envelope = attack * release * (1.0 + 0.03 * (TAU * 4.7 * t).sin());
-            (tone * 0.5 + breath * 0.25) * envelope
-        })
-        .collect();
-    finish(data, 0.8, 0.02)
+            data.push((tone * 0.5 + breath * 0.25) * envelope);
+        }
+    }
+    finish(data, 0.8, 0.02, 2)
 }
 
-/// Every demo sample, as `(file name, audio)`.
-fn all_samples() -> Vec<(&'static str, Vec<f32>)> {
+/// Every demo sample, as `(file name, interleaved audio, channels)`. Every
+/// one is mono except `sax.wav`, kept genuinely stereo (see [`sax`]).
+fn all_samples() -> Vec<(&'static str, Vec<f32>, u16)> {
     vec![
-        ("kick.wav", kick()),
-        ("snare.wav", snare()),
-        ("hihat.wav", hihat()),
-        ("epiano.wav", epiano()),
-        ("sax.wav", sax()),
+        ("kick.wav", kick(), 1),
+        ("snare.wav", snare(), 1),
+        ("hihat.wav", hihat(), 1),
+        ("epiano.wav", epiano(), 1),
+        ("sax.wav", sax(), 2),
     ]
 }
 
@@ -199,14 +221,16 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    for (name, data) in all_samples() {
+    for (name, data, channels) in all_samples() {
         let path: PathBuf = Path::new(&out_dir).join(name);
-        match bm_wav::write_wav(&path, &data, SAMPLE_RATE) {
+        let frame_count = data.len() / channels.max(1) as usize;
+        match bm_wav::write_wav_multi(&path, &data, SAMPLE_RATE, channels) {
             Ok(()) => println!(
-                "wrote {} ({} frames, {:.2} s)",
+                "wrote {} ({} ch, {} frames, {:.2} s)",
                 path.display(),
-                data.len(),
-                data.len() as f32 / SAMPLE_RATE as f32
+                channels,
+                frame_count,
+                frame_count as f32 / SAMPLE_RATE as f32
             ),
             Err(err) => {
                 eprintln!("{err}");
@@ -247,24 +271,26 @@ mod tests {
     #[test]
     fn durations_and_peaks_are_as_designed() {
         let expected = [
-            ("kick.wav", 0.5, 0.9),
-            ("snare.wav", 0.25, 0.8),
-            ("hihat.wav", 0.12, 0.6),
-            ("epiano.wav", 2.5, 0.8),
-            ("sax.wav", 1.2, 0.8),
+            ("kick.wav", 0.5, 0.9, 1),
+            ("snare.wav", 0.25, 0.8, 1),
+            ("hihat.wav", 0.12, 0.6, 1),
+            ("epiano.wav", 2.5, 0.8, 1),
+            ("sax.wav", 1.2, 0.8, 2),
         ];
         let all = all_samples();
         assert_eq!(all.len(), expected.len());
-        for ((name, data), (exp_name, seconds, exp_peak)) in all.iter().zip(expected) {
+        for ((name, data, channels), (exp_name, seconds, exp_peak, exp_channels)) in all.iter().zip(expected) {
             assert_eq!(*name, exp_name);
-            assert_eq!(data.len(), frames(seconds), "{name} length");
+            assert_eq!(*channels, exp_channels, "{name} channels");
+            let frame_count = data.len() / *channels as usize;
+            assert_eq!(frame_count, frames(seconds), "{name} length");
             assert!((peak(data) - exp_peak).abs() < 1e-4, "{name} peak {}", peak(data));
         }
     }
 
     #[test]
     fn every_sample_ends_silent_so_nothing_clicks() {
-        for (name, data) in all_samples() {
+        for (name, data, _channels) in all_samples() {
             let tail = data.last().copied().unwrap().abs();
             assert!(tail < 0.01, "{name} ends at {tail}");
         }
@@ -278,10 +304,31 @@ mod tests {
     #[test]
     fn pitched_samples_are_really_at_their_declared_root_c3() {
         // The player pitch-shifts relative to rootNote, so a sample that is
-        // not actually at its declared note would play out of tune.
+        // not actually at its declared note would play out of tune. sax is
+        // stereo: check its left channel (channel 0 of the interleave).
         let expected_period = SAMPLE_RATE as f32 / C3_HZ; // ~337 frames
-        for (name, data) in [("epiano", epiano()), ("sax", sax())] {
-            let lag = dominant_period(&data, frames(0.3), 2_000, 200..500);
+        for (name, data, channels) in [("epiano", epiano(), 1u16), ("sax", sax(), 2)] {
+            let channel_0: Vec<f32> = data.iter().step_by(channels as usize).copied().collect();
+            let lag = dominant_period(&channel_0, frames(0.3), 2_000, 200..500);
+            let error = (lag as f32 - expected_period).abs() / expected_period;
+            assert!(error < 0.03, "{name}: period {lag} frames, expected ~{expected_period:.0}");
+        }
+    }
+
+    #[test]
+    fn sax_channels_are_distinct_but_close_in_pitch() {
+        // The two channels are independently phased (a few cents apart):
+        // not a bare duplicate, but still close enough to read as one
+        // doubled voice, not two different notes.
+        let data = sax();
+        let left: Vec<f32> = data.iter().step_by(2).copied().collect();
+        let right: Vec<f32> = data.iter().skip(1).step_by(2).copied().collect();
+        assert_ne!(left, right);
+
+        let expected_period = SAMPLE_RATE as f32 / C3_HZ;
+        let left_lag = dominant_period(&left, frames(0.3), 2_000, 200..500);
+        let right_lag = dominant_period(&right, frames(0.3), 2_000, 200..500);
+        for (name, lag) in [("left", left_lag), ("right", right_lag)] {
             let error = (lag as f32 - expected_period).abs() / expected_period;
             assert!(error < 0.03, "{name}: period {lag} frames, expected ~{expected_period:.0}");
         }
