@@ -288,76 +288,86 @@ pub fn show(
                 let y = rows_top + row_tops[ti];
                 let row_height = metrics[ti].row_height;
                 let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, row_height));
-                // Translucent while playing, like the sample/pattern rows in
-                // the properties panel, so the oscilloscope behind it reads
-                // clearly; solid otherwise, for a calmer, more legible header.
-                let cell_fill = if playing { visuals.panel_fill.gamma_multiply(0.55) } else { visuals.panel_fill };
-                painter.rect_filled(cell, 0.0, cell_fill);
+                painter.rect_filled(cell, 0.0, visuals.panel_fill);
                 if let Some(scope) = scopes.get(ti) {
                     // Faint, behind the header.
                     paint_scope(&painter, cell, scope, SCOPE_COLOR);
                 }
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
-                // Row 1: mute, the track's color, then its name.
-                let row1_mid_y = cell.min.y + HEADER_ROW_HEIGHT / 2.0;
+                // The header's own content — text, color swatch, button
+                // icons — fades while playing, like the sample/pattern rows
+                // in the properties panel, so the oscilloscope behind it
+                // reads clearly; full strength otherwise. `Ui::set_opacity`
+                // multiplies the alpha of *everything* painted through this
+                // scope afterwards, widgets included, whatever color each
+                // one resolves to on its own — simpler and more reliable
+                // than fading each color by hand.
                 let muted = view.muted[ti];
-                let mute_button = Rect::from_min_size(
-                    Pos2::new(cell.min.x + 8.0, row1_mid_y - MODE_BUTTON_SIZE / 2.0),
-                    Vec2::splat(MODE_BUTTON_SIZE),
-                );
-                let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
-                let response = ui
-                    .put(mute_button, IconButton::new(icon).selected(muted).size(MODE_BUTTON_SIZE))
-                    .on_hover_text(if muted { t("tracks.unmute") } else { t("tracks.mute") });
-                if response.clicked() {
-                    view.muted[ti] = !muted;
-                }
+                let content_alpha = (if muted { 0.5 } else { 1.0 }) * (if playing { 0.35 } else { 1.0 });
 
-                let swatch = Rect::from_min_size(
-                    Pos2::new(mute_button.max.x + 6.0, row1_mid_y - COLOR_SWATCH_SIZE / 2.0),
-                    Vec2::splat(COLOR_SWATCH_SIZE),
-                );
-                // The color of the track's first pattern's sample: a fixed,
-                // representative color even when later clips use others.
-                let track_color = track
-                    .clips
-                    .first()
-                    .map(|c| view.pattern_color(l, &c.pattern_id))
-                    .unwrap_or(Color32::GRAY);
-                painter.rect_filled(swatch, 2.0, track_color.gamma_multiply(if muted { 0.4 } else { 1.0 }));
+                ui.scope(|ui| {
+                    ui.set_opacity(content_alpha);
 
-                let name_color = if muted { text_color.gamma_multiply(0.5) } else { text_color };
-                painter.with_clip_rect(cell).text(
-                    Pos2::new(swatch.max.x + 6.0, row1_mid_y),
-                    Align2::LEFT_CENTER,
-                    &track.id,
-                    FontId::proportional(14.0),
-                    name_color,
-                );
-
-                // Row 2: the view-mode buttons.
-                let row2_mid_y = cell.min.y + HEADER_ROW_HEIGHT + HEADER_ROW_HEIGHT / 2.0;
-                let mut bx = cell.min.x + 8.0;
-                for mode in TrackViewMode::ALL {
-                    let button = Rect::from_min_size(
-                        Pos2::new(bx, row2_mid_y - MODE_BUTTON_SIZE / 2.0),
+                    // Row 1: mute, the track's color, then its name.
+                    let row1_mid_y = cell.min.y + HEADER_ROW_HEIGHT / 2.0;
+                    let mute_button = Rect::from_min_size(
+                        Pos2::new(cell.min.x + 8.0, row1_mid_y - MODE_BUTTON_SIZE / 2.0),
                         Vec2::splat(MODE_BUTTON_SIZE),
                     );
-                    let selected = view.track_view_modes[ti] == mode;
-                    let tooltip = match mode {
-                        TrackViewMode::Compact => t("tracks.view_compact"),
-                        TrackViewMode::Standard => t("tracks.view_standard"),
-                        TrackViewMode::Full => t("tracks.view_full"),
-                    };
+                    let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
                     let response = ui
-                        .put(button, IconButton::new(mode.icon()).selected(selected).size(MODE_BUTTON_SIZE))
-                        .on_hover_text(tooltip);
+                        .put(mute_button, IconButton::new(icon).selected(muted).size(MODE_BUTTON_SIZE))
+                        .on_hover_text(if muted { t("tracks.unmute") } else { t("tracks.mute") });
                     if response.clicked() {
-                        view.track_view_modes[ti] = mode;
+                        view.muted[ti] = !muted;
                     }
-                    bx += MODE_BUTTON_SIZE + MODE_BUTTON_GAP;
-                }
+
+                    let swatch = Rect::from_min_size(
+                        Pos2::new(mute_button.max.x + 6.0, row1_mid_y - COLOR_SWATCH_SIZE / 2.0),
+                        Vec2::splat(COLOR_SWATCH_SIZE),
+                    );
+                    // The color of the track's first pattern's sample: a
+                    // fixed, representative color even when later clips use
+                    // others.
+                    let track_color = track
+                        .clips
+                        .first()
+                        .map(|c| view.pattern_color(l, &c.pattern_id))
+                        .unwrap_or(Color32::GRAY);
+                    ui.painter().rect_filled(swatch, 2.0, track_color);
+
+                    ui.painter().with_clip_rect(cell).text(
+                        Pos2::new(swatch.max.x + 6.0, row1_mid_y),
+                        Align2::LEFT_CENTER,
+                        &track.id,
+                        FontId::proportional(14.0),
+                        text_color,
+                    );
+
+                    // Row 2: the view-mode buttons.
+                    let row2_mid_y = cell.min.y + HEADER_ROW_HEIGHT + HEADER_ROW_HEIGHT / 2.0;
+                    let mut bx = cell.min.x + 8.0;
+                    for mode in TrackViewMode::ALL {
+                        let button = Rect::from_min_size(
+                            Pos2::new(bx, row2_mid_y - MODE_BUTTON_SIZE / 2.0),
+                            Vec2::splat(MODE_BUTTON_SIZE),
+                        );
+                        let selected = view.track_view_modes[ti] == mode;
+                        let tooltip = match mode {
+                            TrackViewMode::Compact => t("tracks.view_compact"),
+                            TrackViewMode::Standard => t("tracks.view_standard"),
+                            TrackViewMode::Full => t("tracks.view_full"),
+                        };
+                        let response = ui
+                            .put(button, IconButton::new(mode.icon()).selected(selected).size(MODE_BUTTON_SIZE))
+                            .on_hover_text(tooltip);
+                        if response.clicked() {
+                            view.track_view_modes[ti] = mode;
+                        }
+                        bx += MODE_BUTTON_SIZE + MODE_BUTTON_GAP;
+                    }
+                });
             }
             painter.line_segment(
                 [Pos2::new(x_pin + LEFT_WIDTH, rows_top.max(origin.y + viewport.min.y)), Pos2::new(x_pin + LEFT_WIDTH, rows_bottom)],
