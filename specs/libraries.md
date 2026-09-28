@@ -25,7 +25,7 @@ bit-music/
 
 | Crate | Responsibility | Originally in `player/src` |
 |---|---|---|
-| `bm-dsp` | Numeric audio primitives: `AudioBuffer`, resampling, downmix, normalize, mix-into, semitones→ratio. Pure, no I/O, real-time safe | `audio` (resample/downmix), `mix` (mix_into/normalize) |
+| `bm-dsp` | Numeric audio primitives: `AudioBuffer`, resampling, downmix, normalize, mix-into, semitones→ratio. Pure, no I/O, real-time safe. **Mono only, by design** — see [`stereo-audio.md`](stereo-audio.md) | `audio` (resample/downmix), `mix` (mix_into/normalize) |
 | `bm-format` | The `.bm1` contract: serde model, note notation, validation rules, supported format versions, default resolution, parse/serialize from/to `&str`. Pure, no file or audio I/O | `model`, `note`, `validate` |
 | `bm-wav` | Read, write and header-check `.wav` files (returns `bm-dsp::AudioBuffer`) | `audio` (load/write/check) |
 | `bm-timeline` | Arrangement → per-track timeline (grid/column model, looping, silence padding) and `seconds_per_step`. Pure | `resolve` |
