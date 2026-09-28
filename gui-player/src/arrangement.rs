@@ -288,7 +288,11 @@ pub fn show(
                 let y = rows_top + row_tops[ti];
                 let row_height = metrics[ti].row_height;
                 let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, row_height));
-                painter.rect_filled(cell, 0.0, visuals.panel_fill);
+                // Translucent while playing, like the sample/pattern rows in
+                // the properties panel, so the oscilloscope behind it reads
+                // clearly; solid otherwise, for a calmer, more legible header.
+                let cell_fill = if playing { visuals.panel_fill.gamma_multiply(0.55) } else { visuals.panel_fill };
+                painter.rect_filled(cell, 0.0, cell_fill);
                 if let Some(scope) = scopes.get(ti) {
                     // Faint, behind the header.
                     paint_scope(&painter, cell, scope, SCOPE_COLOR);
