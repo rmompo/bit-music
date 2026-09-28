@@ -293,6 +293,8 @@ fn sample_properties(ui: &mut egui::Ui, l: &Loaded, id: &str) {
                 row(ui, t("prop.length"), format!("{:.2} s", audio.duration_seconds()));
                 row(ui, t("prop.frames"), audio.data.len().to_string());
                 row(ui, t("prop.sample_rate"), format!("{} Hz", audio.sample_rate));
+                let channels = if audio.channels() > 1 { t("prop.stereo") } else { t("prop.mono") };
+                row(ui, t("prop.channels"), channels);
             }
         });
 }
@@ -480,6 +482,7 @@ mod tests {
         for selection in [
             Selection::None,
             Selection::Sample("sax".into()),
+            Selection::Sample("kick".into()),
             Selection::Pattern("saxA".into()),
             Selection::Pattern("kickA".into()),
         ] {
