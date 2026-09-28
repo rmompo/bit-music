@@ -172,11 +172,11 @@ pub fn status_bar(
                     (regular::SPEAKER_HIGH, t("status.mute"))
                 };
                 let side = ui.spacing().interact_size.y;
-                if ui
-                    .add(IconButton::new(icon).size(side))
-                    .on_hover_text(tip)
-                    .clicked()
-                {
+                let mut button = IconButton::new(icon).size(side);
+                if muted {
+                    button = button.color(ERR_COLOR);
+                }
+                if ui.add(button).on_hover_text(tip).clicked() {
                     toggle_mute(volume, last_volume);
                 }
                 ui.separator();

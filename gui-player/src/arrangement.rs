@@ -15,6 +15,7 @@ use crate::fmt;
 use crate::i18n::{t, tf};
 use crate::grid;
 use crate::loader::Loaded;
+use crate::panels::ERR_COLOR;
 use crate::widgets::{paint_scope_multi, IconButton};
 use crate::view::{Selection, TrackViewMode, ViewState};
 
@@ -334,8 +335,12 @@ pub fn show(
                         Vec2::splat(MODE_BUTTON_SIZE),
                     );
                     let icon = if muted { regular::SPEAKER_SLASH } else { regular::SPEAKER_HIGH };
+                    let mut mute_icon = IconButton::new(icon).selected(muted).size(MODE_BUTTON_SIZE);
+                    if muted {
+                        mute_icon = mute_icon.color(ERR_COLOR);
+                    }
                     let response = ui
-                        .put(mute_button, IconButton::new(icon).selected(muted).size(MODE_BUTTON_SIZE))
+                        .put(mute_button, mute_icon)
                         .on_hover_text(if muted { t("tracks.unmute") } else { t("tracks.mute") });
                     if response.clicked() {
                         view.muted[ti] = !muted;
