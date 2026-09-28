@@ -392,7 +392,7 @@ fn package_file_name(composition: &Path) -> String {
 /// Renders nothing new: writes the composition's full mix (the same audio
 /// `bm export --wav` writes) to `path`.
 fn write_export(session: &bm_session::Session, path: &Path) -> Result<(), bm_wav::WavError> {
-    bm_wav::write_wav(path, &session.master, bm_render::OUTPUT_SAMPLE_RATE)
+    bm_wav::write_wav_multi(path, &session.master, bm_render::OUTPUT_SAMPLE_RATE, session.channels)
 }
 
 impl eframe::App for PlayerApp {
@@ -632,8 +632,9 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "song1.wav");
 
         write_export(session, &path).unwrap();
-        let back = bm_wav::load_wav(&path).unwrap();
+        let back = bm_wav::load_wav_multi(&path).unwrap();
         assert_eq!(back.sample_rate, bm_render::OUTPUT_SAMPLE_RATE);
+        assert_eq!(back.channels(), session.channels);
         assert_eq!(back.data.len(), session.master.len());
         assert!(back.data.iter().any(|v| *v != 0.0));
     }

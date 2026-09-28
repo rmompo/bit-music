@@ -189,7 +189,7 @@ pub fn export(file: &Path, wav: bool) -> bool {
     };
 
     let output_path = file.with_extension("wav");
-    match bm_wav::write_wav(&output_path, &session.master, OUTPUT_SAMPLE_RATE) {
+    match bm_wav::write_wav_multi(&output_path, &session.master, OUTPUT_SAMPLE_RATE, session.channels) {
         Ok(()) => {
             println!("Exported to '{}'", output_path.display());
             true
