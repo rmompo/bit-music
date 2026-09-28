@@ -9,8 +9,10 @@
 //! cargo run -p gen-demo-samples -- some/dir     # writes elsewhere
 //! ```
 //!
-//! Every sample is mono, 44.1 kHz, and fully deterministic (the noise comes
-//! from a fixed-seed generator), so regenerating gives identical files.
+//! Every sample is 44.1 kHz and fully deterministic (the noise comes from
+//! a fixed-seed generator), so regenerating gives identical files. Every
+//! one is mono except `sax.wav`, kept genuinely stereo (see [`sax`]) to
+//! exercise the player's multi-channel path.
 //!
 //! Pitched samples are synthesized at the note their `.bm1` declares as
 //! `rootNote`/`rootOctave`, because the player pitch-shifts relative to it:

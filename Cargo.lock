@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "bm-dsp"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "bm-format"
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "bm-playback"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bm-dsp",
  "cpal",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "bm-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bm-dsp",
  "bm-format",
@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "bm-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bm-dsp",
  "bm-project",
@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "bm-wav"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bm-dsp",
  "hound",

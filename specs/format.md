@@ -200,9 +200,13 @@ so that every player and the editor agree:
   higher notes are shorter and lower notes are longer.
 - The sample **plays to its end**: a following step does not cut it off, and
   the format has no note length or envelope. Voices that overlap are summed.
-- Audio is **mono**: stereo sample files are downmixed on load, and all tracks
-  are summed into one signal. If the sum would exceed full scale it is scaled
-  down so it does not clip.
+- Audio keeps each sample's real channel count: a composition where every
+  sample is mono mixes and plays at one channel, exactly as before; one
+  with a stereo sample mixes and plays in real stereo (a narrower, mono
+  sample sharing it is duplicated to both channels, not downmixed). Every
+  track is summed into one signal, per channel. If the sum would exceed
+  full scale it is scaled down so it does not clip. See
+  [`stereo-audio.md`](stereo-audio.md).
 - Samples at other sample rates are converted to the output rate; this does
   not change pitch or duration.
 
@@ -213,5 +217,6 @@ See [`demos/songs/song1.bm1`](../demos/songs/song1.bm1).
 ## Open items
 
 - Valid range for `steps.length` beyond "multiple of 4" (upper bound?).
-- Note length / envelope, and stereo placement, are not part of the format yet
-  (see *Playback semantics*); adding them would be a new format version.
+- Note length / envelope, and explicit stereo placement (panning a note or
+  a track independently of its sample's own channels), are not part of the
+  format yet; adding them would be a new format version.

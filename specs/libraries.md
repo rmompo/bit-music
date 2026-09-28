@@ -25,14 +25,14 @@ bit-music/
 
 | Crate | Responsibility | Originally in `player/src` |
 |---|---|---|
-| `bm-dsp` | Numeric audio primitives: `AudioBuffer`, resampling, downmix, normalize, mix-into, semitones→ratio. Pure, no I/O, real-time safe. **Mono only, by design** — see [`stereo-audio.md`](stereo-audio.md) | `audio` (resample/downmix), `mix` (mix_into/normalize) |
+| `bm-dsp` | Numeric audio primitives: `AudioBuffer` (carries a channel count; interleaved data), resampling, downmix/upmix, normalize, mix-into, semitones→ratio, each with a multi-channel (`_multi`) form alongside its original mono one. Pure, no I/O, real-time safe | `audio` (resample/downmix), `mix` (mix_into/normalize) |
 | `bm-format` | The `.bm1` contract: serde model, note notation, validation rules, supported format versions, default resolution, parse/serialize from/to `&str`. Pure, no file or audio I/O | `model`, `note`, `validate` |
-| `bm-wav` | Read, write and header-check `.wav` files (returns `bm-dsp::AudioBuffer`) | `audio` (load/write/check) |
+| `bm-wav` | Read, write and header-check `.wav` files (returns `bm-dsp::AudioBuffer`); `_multi` variants keep every channel instead of downmixing to mono | `audio` (load/write/check) |
 | `bm-timeline` | Arrangement → per-track timeline (grid/column model, looping, silence padding) and `seconds_per_step`. Pure | `resolve` |
 | `bm-project` | Everything touching the file system for a composition: load a `.bm1`, resolve sample paths relative to it, report which samples are present/valid. Returns structured reports, never prints | `loader`, sample checks from `commands` |
-| `bm-render` | Timeline + decoded samples → one buffer per track and the master mix; pitch-shift per step | `mix`, `pitch` |
-| `bm-playback` | Audio device output (`cpal`): non-blocking engine with play/pause/stop/seek/loop, per-track mute, master volume, sample previews, position exposed atomically | `playback` |
-| `bm-session` | Thin facade "open a project and get everything ready to play/export". No logic of its own | `load_and_mix` in `commands` |
+| `bm-render` | Timeline + decoded samples → one buffer per track and the master mix; pitch-shift per step; `_multi` variants render at an explicit channel count, upmixing a narrower voice to fit | `mix`, `pitch` |
+| `bm-playback` | Audio device output (`cpal`): non-blocking engine with play/pause/stop/seek/loop, per-track mute, master volume, sample previews, position exposed atomically; mixes per output channel and reconciles with the device's own channel count (pass-through/average/duplicate) | `playback` |
+| `bm-session` | Thin facade "open a project and get everything ready to play/export", at the composition's real channel count (`Session::channels`). No logic of its own | `load_and_mix` in `commands` |
 
 What stays in each application (not shared): CLI help rendering, ANSI
 colors, keyboard listener, subcommand dispatch and console output (`bm`);
@@ -89,16 +89,25 @@ Beyond moving code, the split added what a GUI and an editor need:
   mixing logic is separated from `cpal` and unit-tested.
 - `bm-format` can serialize (`to_json`) as well as parse.
 
-Not yet done: solo per track, envelope/note duration, stereo.
+Not yet done: solo per track, envelope/note duration.
+
+Stereo (real, per-channel audio end to end — decoding, rendering,
+mixing, playback, export, and the GUI's oscilloscopes) was added after
+this section was written; see [`stereo-audio.md`](stereo-audio.md) for
+what changed and why.
 
 ## Versioning
 
 Each library carries its own version in its `Cargo.toml` (not inherited from
 the workspace), bumped when its public API changes: `bm-playback` is at
-0.4.0 (master volume, previews, asking whether one is sounding and the scope
-windows for oscilloscopes),
-`bm-render` at 0.2.0 (`render_pattern`), `bm-project` at 0.2.0 (declared sample
-files) and the rest at 0.1.0. The GUI's *Tools > Libraries* window shows them.
+0.5.0 (master volume, previews, asking whether one is sounding, the scope
+windows for oscilloscopes, and — as of this bump — per-channel mixing and
+per-channel scopes), `bm-render` at 0.3.0 (`render_pattern`, and — as of
+this bump — `render_tracks_multi`/`render_pattern_multi` and
+`TrackBuffer::native_channels`), `bm-dsp` and `bm-wav` at 0.2.0 (their
+`_multi` multi-channel siblings), `bm-session` at 0.2.0 (`Session::channels`),
+`bm-project` at 0.2.0 (declared sample files) and the rest at 0.1.0. The
+GUI's *Tools > Libraries* window shows them.
 
 ## Licensing
 
