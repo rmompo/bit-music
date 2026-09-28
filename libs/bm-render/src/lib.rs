@@ -30,6 +30,13 @@ pub struct TrackBuffer {
     /// exceed `[-1, 1]` when its own voices overlap; normalization happens
     /// on the mix.
     pub audio: AudioBuffer,
+    /// The widest channel count among the samples this track actually
+    /// plays (`1` for a silent or all-mono track) — *before* `audio` was
+    /// upmixed to the whole composition's shared channel count, so a
+    /// caller can still tell a genuinely mono track from a stereo one once
+    /// every track has been widened to sit in the same mix (e.g. to size
+    /// an oscilloscope's traces correctly).
+    pub native_channels: u16,
 }
 
 /// Renders every track of `arrangement` to its own mono buffer. The same
@@ -72,12 +79,14 @@ pub fn render_tracks_multi(
         .iter()
         .map(|track| {
             let mut buffer: Vec<f32> = Vec::new();
+            let mut native_channels: u16 = 1;
 
             for (index, step) in track.steps.iter().enumerate() {
                 let Some(step) = step else { continue };
 
                 let sample = samples_by_id[step.sample_id.as_str()];
                 let source = &audio[&step.sample_id];
+                native_channels = native_channels.max(source.channels());
                 let voice = render_voice(sample, source, &step.note, channels);
 
                 let start = (index as f64 * frames_per_step).round() as usize;
@@ -87,6 +96,7 @@ pub fn render_tracks_multi(
             TrackBuffer {
                 track_id: track.id.clone(),
                 audio: AudioBuffer::new_multi(buffer, OUTPUT_SAMPLE_RATE, channels),
+                native_channels,
             }
         })
         .collect()
@@ -292,6 +302,60 @@ mod tests {
         let master = mix_tracks(&tracks, &[]);
         // Two identical upmixed 0.5 voices sum to 1.0 on both channels.
         assert_eq!(&master[0..2], &[1.0, 1.0]);
+    }
+
+    #[test]
+    fn native_channels_reports_each_track_s_own_width_even_once_homogenized() {
+        // Two tracks, two different samples: "m" (mono) on track a, "s"
+        // (stereo) on track b. Both get rendered (upmixed where needed) to
+        // the same channels: 2, as any mixed composition's tracks are, but
+        // native_channels must still tell them apart.
+        const TWO_TRACKS: &str = r#"{
+            "metadata": { "version": "1.0", "title": "t", "bpm": 120 },
+            "samples": [ { "id": "m", "file": "m.wav" }, { "id": "s", "file": "s.wav" } ],
+            "patterns": [
+                { "id": "pm", "sample": "m", "steps": ["C4", null, null, null] },
+                { "id": "ps", "sample": "s", "steps": ["C4", null, null, null] }
+            ],
+            "arrangement": { "tracks": [
+                { "id": "a", "sequence": ["pm"] },
+                { "id": "b", "sequence": ["ps"] }
+            ] }
+        }"#;
+        let composition = parse_composition(TWO_TRACKS).unwrap();
+        let arrangement = resolve(&composition);
+        let mut audio = HashMap::new();
+        audio.insert("m".to_string(), AudioBuffer::new(vec![0.5; 10], OUTPUT_SAMPLE_RATE));
+        let stereo_data: Vec<f32> = (0..5).flat_map(|_| [1.0, 0.0]).collect();
+        audio.insert("s".to_string(), AudioBuffer::new_multi(stereo_data, OUTPUT_SAMPLE_RATE, 2));
+        let sps = seconds_per_step(&composition.metadata);
+
+        let tracks = render_tracks_multi(&arrangement, &composition.samples, &audio, sps, 2);
+        // Both buffers are at the shared width...
+        assert_eq!(tracks[0].audio.channels(), 2);
+        assert_eq!(tracks[1].audio.channels(), 2);
+        // ...but each track still reports what it actually, natively is.
+        assert_eq!(tracks[0].native_channels, 1);
+        assert_eq!(tracks[1].native_channels, 2);
+    }
+
+    #[test]
+    fn a_silent_track_reports_one_native_channel() {
+        let composition = parse_composition(SONG).unwrap();
+        let arrangement = resolve(&composition);
+        // Clear every step so both tracks play nothing at all: with no
+        // sample ever looked at, native_channels must still fall back to a
+        // sane default (1) instead of panicking or staying uninitialized.
+        let mut empty_arrangement = arrangement.clone();
+        for track in &mut empty_arrangement.tracks {
+            for step in &mut track.steps {
+                *step = None;
+            }
+        }
+        let audio = HashMap::new();
+        let sps = seconds_per_step(&composition.metadata);
+        let tracks = render_tracks_multi(&empty_arrangement, &composition.samples, &audio, sps, 2);
+        assert_eq!(tracks[0].native_channels, 1);
     }
 
     #[test]

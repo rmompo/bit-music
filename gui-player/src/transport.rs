@@ -6,7 +6,7 @@
 //! the reason) and the controls are disabled instead of the app failing.
 
 use bm_playback::Engine;
-use bm_render::render_pattern;
+use bm_render::render_pattern_multi;
 use bm_dsp::AudioBuffer;
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular;
@@ -29,6 +29,13 @@ pub struct Transport {
     engine: Option<Engine>,
     /// Keys (`sample:<id>` / `pattern:<id>`), in the order of the engine's previews.
     preview_ids: Vec<String>,
+    /// Each track's own channel count, before it was upmixed to sit
+    /// alongside every other track in the mix (parallel to the engine's
+    /// tracks) — see [`bm_render::TrackBuffer::native_channels`]. A scope
+    /// truncates to this so a mono track shows one trace, not several
+    /// identical copies of it just because something else plays alongside
+    /// it in stereo.
+    track_channels: Vec<u16>,
     error: Option<SessionIssue>,
 }
 
@@ -39,7 +46,10 @@ impl Transport {
             return Self::unavailable(l.session_error.clone().unwrap_or(SessionIssue::NoAudio));
         };
         // Previews: every sample as it is, and every pattern rendered on
-        // its own (with the composition's tempo).
+        // its own (with the composition's tempo), each at its own sample's
+        // channel count — not forced mono, and not the whole session's
+        // shared width, so e.g. a mono pattern's preview stays genuinely
+        // mono even in a composition that also has a stereo one.
         let c = &l.project.composition;
         let mut preview_ids: Vec<String> = Vec::new();
         let mut previews: Vec<AudioBuffer> = Vec::new();
@@ -50,17 +60,20 @@ impl Transport {
             }
         }
         for p in &c.patterns {
+            let channels = session.samples.get(&p.sample).map_or(1, AudioBuffer::channels);
             if let Some(audio) =
-                render_pattern(p, &c.samples, &session.samples, l.seconds_per_step)
+                render_pattern_multi(p, &c.samples, &session.samples, l.seconds_per_step, channels)
             {
                 preview_ids.push(pattern_key(&p.id));
                 previews.push(audio);
             }
         }
+        let track_channels: Vec<u16> = session.tracks.iter().map(|t| t.native_channels).collect();
         match Engine::with_previews(session.tracks.iter().map(|t| &t.audio), &previews) {
             Ok(engine) => Self {
                 engine: Some(engine),
                 preview_ids,
+                track_channels,
                 error: None,
             },
             Err(err) => Self::unavailable(SessionIssue::Other(err.to_string())),
@@ -71,6 +84,7 @@ impl Transport {
         Self {
             engine: None,
             preview_ids: Vec::new(),
+            track_channels: Vec::new(),
             error: Some(reason),
         }
     }
@@ -201,7 +215,18 @@ impl Transport {
     /// mono track still comes back with exactly one trace).
     pub fn track_scopes_multi(&self, points: usize) -> Vec<Vec<Vec<f32>>> {
         match &self.engine {
-            Some(e) => (0..e.track_count()).map(|i| e.track_scope_multi(i, points)).collect(),
+            Some(e) => (0..e.track_count())
+                .map(|i| {
+                    let mut scope = e.track_scope_multi(i, points);
+                    // The engine reports up to the *mix's* shared channel
+                    // count (every track was upmixed to it internally); cut
+                    // back to this track's own, so a mono track still shows
+                    // one trace even when it plays alongside a stereo one.
+                    let native = self.track_channels.get(i).copied().unwrap_or(scope.len() as u16);
+                    scope.truncate(native.max(1) as usize);
+                    scope
+                })
+                .collect(),
             None => Vec::new(),
         }
     }
