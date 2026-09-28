@@ -327,9 +327,10 @@ impl Engine {
     }
 
     /// What track `index` is playing around the current position, as
-    /// `points` values for drawing an oscilloscope (scaled like the output:
-    /// with the mix gain and the master volume). Empty while nothing is
-    /// playing or when the track is muted.
+    /// `points` values for drawing an oscilloscope (scaled by the mix gain
+    /// only — *not* the master volume, so turning the app's volume down
+    /// never shrinks the trace). Empty while nothing is playing or when the
+    /// track is muted.
     pub fn track_scope(&self, index: usize, points: usize) -> Vec<f32> {
         if !self.is_playing() || self.is_muted(index) {
             return Vec::new();
@@ -337,14 +338,14 @@ impl Engine {
         let Some(track) = self.core.tracks.get(index) else {
             return Vec::new();
         };
-        let scale = self.core.gain * self.volume();
         scope_window(track, self.core.current_position(), self.scope_half(), points)
             .into_iter()
-            .map(|v| v * scale)
+            .map(|v| v * self.core.gain)
             .collect()
     }
 
-    /// The same for preview `index`: empty unless it is sounding.
+    /// The same for preview `index`: empty unless it is sounding. Not
+    /// scaled by the master volume either, for the same reason.
     pub fn preview_scope(&self, index: usize, points: usize) -> Vec<f32> {
         let Some(pos) = self.core.preview_pos.get(index) else {
             return Vec::new();
@@ -353,11 +354,7 @@ impl Engine {
         if position == IDLE {
             return Vec::new();
         }
-        let volume = self.volume();
         scope_window(&self.core.previews[index], position, self.scope_half(), points)
-            .into_iter()
-            .map(|v| v * volume)
-            .collect()
     }
 
     fn scope_half(&self) -> usize {
