@@ -123,7 +123,7 @@ pub fn show(
     l: &Loaded,
     view: &mut ViewState,
     transport: &Transport,
-    scopes: &[Vec<f32>],
+    scopes: &[Vec<Vec<f32>>],
 ) {
     let total = ui.available_width();
     let limit = view.divider_limits.tracks_width;

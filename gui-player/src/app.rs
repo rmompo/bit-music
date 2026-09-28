@@ -505,7 +505,7 @@ impl eframe::App for PlayerApp {
                 let Ready { loaded, view, transport, .. } = &mut **ready;
                 // Left column (tabs over properties), tracks and, under
                 // them, the transport, with their dividers.
-                let scopes = transport.track_scopes(widgets::scope_points(arrangement::LEFT_WIDTH));
+                let scopes = transport.track_scopes_multi(widgets::scope_points(arrangement::LEFT_WIDTH));
                 layout::show(ui, loaded, view, transport, &scopes);
             }
         });

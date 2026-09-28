@@ -84,6 +84,27 @@ pub fn paint_scope(painter: &Painter, rect: Rect, values: &[f32], color: Color32
         .add(Shape::line(points, Stroke::new(1.5, color)));
 }
 
+/// Draws one oscilloscope trace per channel, stacked in equal horizontal
+/// bands across `rect` (top to bottom) so multiple channels stay legible
+/// at once. A single channel draws exactly as [`paint_scope`], across the
+/// whole of `rect`.
+pub fn paint_scope_multi(painter: &Painter, rect: Rect, channels: &[Vec<f32>], color: Color32) {
+    match channels {
+        [] => {}
+        [only] => paint_scope(painter, rect, only, color),
+        _ => {
+            let band_height = rect.height() / channels.len() as f32;
+            for (i, values) in channels.iter().enumerate() {
+                let band = Rect::from_min_size(
+                    Pos2::new(rect.left(), rect.top() + band_height * i as f32),
+                    Vec2::new(rect.width(), band_height),
+                );
+                paint_scope(painter, band, values, color);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +120,24 @@ mod tests {
         });
         assert_eq!(scope_points(300.0), 150);
         assert_eq!(scope_points(0.0), 2);
+    }
+
+    #[test]
+    fn a_multi_scope_draws_one_band_per_channel_and_ignores_no_channels() {
+        egui::__run_test_ui(|ui| {
+            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 30.0));
+            // Mono: draws like a single paint_scope, no panic.
+            paint_scope_multi(ui.painter(), rect, &[vec![0.0, 1.0, -1.0]], Color32::WHITE);
+            // Stereo: two bands, no panic.
+            paint_scope_multi(
+                ui.painter(),
+                rect,
+                &[vec![0.0, 1.0, -1.0], vec![0.0, -1.0, 1.0]],
+                Color32::WHITE,
+            );
+            // No channels at all: a no-op.
+            paint_scope_multi(ui.painter(), rect, &[], Color32::WHITE);
+        });
     }
 
     #[test]

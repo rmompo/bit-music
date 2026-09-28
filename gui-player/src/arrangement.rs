@@ -15,7 +15,7 @@ use crate::fmt;
 use crate::i18n::{t, tf};
 use crate::grid;
 use crate::loader::Loaded;
-use crate::widgets::{paint_scope, IconButton};
+use crate::widgets::{paint_scope_multi, IconButton};
 use crate::view::{Selection, TrackViewMode, ViewState};
 
 const PLAYHEAD_COLOR: Color32 = Color32::from_rgb(255, 90, 90);
@@ -74,15 +74,16 @@ pub fn track_metrics(max_rows: usize, target_mark_height: f32) -> TrackMetrics {
 /// Draws the arrangement. `playhead` is the playback position in seconds
 /// (`None` when there is nothing to play); while `playing`, the view scrolls
 /// horizontally to keep the cursor visible.
-/// `scopes` holds, per track, the live oscilloscope values drawn behind that
-/// track's name in the pinned column (empty when there is nothing to show).
+/// `scopes` holds, per track, one live oscilloscope trace per channel,
+/// drawn behind that track's name in the pinned column (empty when there is
+/// nothing to show).
 pub fn show(
     ui: &mut egui::Ui,
     l: &Loaded,
     view: &mut ViewState,
     playhead: Option<f64>,
     playing: bool,
-    scopes: &[Vec<f32>],
+    scopes: &[Vec<Vec<f32>>],
 ) {
     let timeline = &l.timeline;
     let spb = (l.project.composition.metadata.steps_per_beat as usize).max(1);
@@ -290,8 +291,8 @@ pub fn show(
                 let cell = Rect::from_min_size(Pos2::new(x_pin, y), Vec2::new(LEFT_WIDTH, row_height));
                 painter.rect_filled(cell, 0.0, visuals.panel_fill);
                 if let Some(scope) = scopes.get(ti) {
-                    // Faint, behind the header.
-                    paint_scope(&painter, cell, scope, SCOPE_COLOR);
+                    // Faint, behind the header. One band per channel.
+                    paint_scope_multi(&painter, cell, scope, SCOPE_COLOR);
                 }
                 painter.line_segment([cell.left_bottom(), cell.right_bottom()], strong_line);
 
@@ -456,7 +457,8 @@ mod tests {
         view.select(Selection::Pattern("kickA".into()));
         // with a playback cursor inside, at the end, and past the end
         for t in [0.0, 1.3, 2.5, 6.0] {
-            let scopes = vec![vec![0.0, 0.8, -0.8, 0.3]; l.timeline.tracks.len()];
+            // Two channels per track, to exercise the multi-channel path too.
+            let scopes = vec![vec![vec![0.0, 0.8, -0.8, 0.3], vec![0.0, -0.5, 0.5, -0.2]]; l.timeline.tracks.len()];
             egui::__run_test_ui(|ui| show(ui, &l, &mut view, Some(t), true, &scopes));
         }
     }

@@ -185,28 +185,30 @@ impl Transport {
     }
 
     /// Oscilloscope values (`points` of them) for sample `id` while its
-    /// preview sounds; empty otherwise.
-    pub fn preview_scope_sample(&self, id: &str, points: usize) -> Vec<f32> {
-        self.preview_scope(&sample_key(id), points)
+    /// preview sounds, one trace per channel (a mono sample still comes
+    /// back with exactly one); empty otherwise.
+    pub fn preview_scope_sample_multi(&self, id: &str, points: usize) -> Vec<Vec<f32>> {
+        self.preview_scope_multi(&sample_key(id), points)
     }
 
     /// The same for pattern `id`.
-    pub fn preview_scope_pattern(&self, id: &str, points: usize) -> Vec<f32> {
-        self.preview_scope(&pattern_key(id), points)
+    pub fn preview_scope_pattern_multi(&self, id: &str, points: usize) -> Vec<Vec<f32>> {
+        self.preview_scope_multi(&pattern_key(id), points)
     }
 
-    /// One oscilloscope trace per track while the transport plays (empty for
-    /// a track that is muted, or when nothing plays).
-    pub fn track_scopes(&self, points: usize) -> Vec<Vec<f32>> {
+    /// One oscilloscope trace per channel, per track, while the transport
+    /// plays (empty for a track that is muted, or when nothing plays; a
+    /// mono track still comes back with exactly one trace).
+    pub fn track_scopes_multi(&self, points: usize) -> Vec<Vec<Vec<f32>>> {
         match &self.engine {
-            Some(e) => (0..e.track_count()).map(|i| e.track_scope(i, points)).collect(),
+            Some(e) => (0..e.track_count()).map(|i| e.track_scope_multi(i, points)).collect(),
             None => Vec::new(),
         }
     }
 
-    fn preview_scope(&self, key: &str, points: usize) -> Vec<f32> {
+    fn preview_scope_multi(&self, key: &str, points: usize) -> Vec<Vec<f32>> {
         match (&self.engine, self.preview_ids.iter().position(|p| p == key)) {
-            (Some(e), Some(i)) => e.preview_scope(i, points),
+            (Some(e), Some(i)) => e.preview_scope_multi(i, points),
             _ => Vec::new(),
         }
     }
