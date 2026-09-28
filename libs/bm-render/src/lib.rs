@@ -32,19 +32,37 @@ pub struct TrackBuffer {
     pub audio: AudioBuffer,
 }
 
-/// Renders every track of `arrangement` to its own buffer, applying each
-/// step's pitch-shift and summing the voices that overlap in time within
-/// the track.
-///
-/// `audio` maps a sample id to its decoded audio; every sample referenced
-/// by the arrangement must be present (guaranteed if the composition was
-/// validated and all its samples were loaded).
+/// Renders every track of `arrangement` to its own mono buffer. The same
+/// as [`render_tracks_multi`] with `channels: 1` (every voice mixed in is
+/// already mono, so there is nothing to upmix).
 pub fn render_tracks(
     arrangement: &ResolvedArrangement,
     samples: &[Sample],
     audio: &HashMap<String, AudioBuffer>,
     seconds_per_step: f64,
 ) -> Vec<TrackBuffer> {
+    render_tracks_multi(arrangement, samples, audio, seconds_per_step, 1)
+}
+
+/// Renders every track of `arrangement` to its own buffer of `channels`
+/// channels, applying each step's pitch-shift and summing the voices that
+/// overlap in time within the track. A voice whose own sample has fewer
+/// channels than `channels` is upmixed (see [`dsp::upmix`]) before being
+/// mixed in, so e.g. a mono kick and a stereo sax can share a composition:
+/// every track (and the master mix built from them) ends up at the same,
+/// wider channel count.
+///
+/// `audio` maps a sample id to its decoded audio; every sample referenced
+/// by the arrangement must be present (guaranteed if the composition was
+/// validated and all its samples were loaded).
+pub fn render_tracks_multi(
+    arrangement: &ResolvedArrangement,
+    samples: &[Sample],
+    audio: &HashMap<String, AudioBuffer>,
+    seconds_per_step: f64,
+    channels: u16,
+) -> Vec<TrackBuffer> {
+    let channels = channels.max(1);
     let samples_by_id: HashMap<&str, &Sample> =
         samples.iter().map(|s| (s.id.as_str(), s)).collect();
     let frames_per_step = seconds_per_step * OUTPUT_SAMPLE_RATE as f64;
@@ -60,40 +78,63 @@ pub fn render_tracks(
 
                 let sample = samples_by_id[step.sample_id.as_str()];
                 let source = &audio[&step.sample_id];
-                let voice = render_voice(sample, source, &step.note);
+                let voice = render_voice(sample, source, &step.note, channels);
 
                 let start = (index as f64 * frames_per_step).round() as usize;
-                dsp::mix_into(&mut buffer, &voice, start);
+                dsp::mix_into_multi(&mut buffer, &voice, start, channels as usize);
             }
 
             TrackBuffer {
                 track_id: track.id.clone(),
-                audio: AudioBuffer::new(buffer, OUTPUT_SAMPLE_RATE),
+                audio: AudioBuffer::new_multi(buffer, OUTPUT_SAMPLE_RATE, channels),
             }
         })
         .collect()
 }
 
 /// One sounding note: the sample pitch-shifted to `note` and converted to
-/// [`OUTPUT_SAMPLE_RATE`] in a single resampling pass.
-fn render_voice(sample: &Sample, source: &AudioBuffer, note: &Note) -> Vec<f32> {
+/// [`OUTPUT_SAMPLE_RATE`] in a single resampling pass (resampled per
+/// channel, at the source's own channel count, never blending channels
+/// together — see [`dsp::resample_multi`]), then upmixed to `channels`
+/// channels if the source has fewer.
+fn render_voice(sample: &Sample, source: &AudioBuffer, note: &Note, channels: u16) -> Vec<f32> {
     let pitch_shift = pitch::pitch_shift_for(sample, note);
     // combined ratio: pitch-shift + conversion from the .wav's native
     // sample rate to the output sample rate.
     let rate_ratio = source.sample_rate as f64 / OUTPUT_SAMPLE_RATE as f64;
-    dsp::resample(&source.data, pitch_shift.ratio * rate_ratio)
+    let resampled = dsp::resample_multi(
+        &source.data,
+        pitch_shift.ratio * rate_ratio,
+        source.channels() as usize,
+    );
+    dsp::upmix(&resampled, source.channels() as usize, channels as usize)
 }
 
 /// Renders a single pattern on its own, once, from its first step (for
-/// auditioning it). `None` if its sample is unknown or not in `audio`.
-/// Steps that are not valid notes are skipped (validation rejects them
-/// before a composition gets this far).
+/// auditioning it), mono. The same as [`render_pattern_multi`] with
+/// `channels: 1`.
 pub fn render_pattern(
     pattern: &Pattern,
     samples: &[Sample],
     audio: &HashMap<String, AudioBuffer>,
     seconds_per_step: f64,
 ) -> Option<AudioBuffer> {
+    render_pattern_multi(pattern, samples, audio, seconds_per_step, 1)
+}
+
+/// The same as [`render_pattern`], at `channels` channels (see
+/// [`render_tracks_multi`] for how a narrower source is upmixed). `None`
+/// if its sample is unknown or not in `audio`. Steps that are not valid
+/// notes are skipped (validation rejects them before a composition gets
+/// this far).
+pub fn render_pattern_multi(
+    pattern: &Pattern,
+    samples: &[Sample],
+    audio: &HashMap<String, AudioBuffer>,
+    seconds_per_step: f64,
+    channels: u16,
+) -> Option<AudioBuffer> {
+    let channels = channels.max(1);
     let sample = samples.iter().find(|s| s.id == pattern.sample)?;
     let source = audio.get(&pattern.sample)?;
     let frames_per_step = seconds_per_step * OUTPUT_SAMPLE_RATE as f64;
@@ -102,17 +143,20 @@ pub fn render_pattern(
     for (index, raw) in pattern.steps.iter().enumerate() {
         let Some(raw) = raw else { continue };
         let Ok(note) = parse_note(raw) else { continue };
-        let voice = render_voice(sample, source, &note);
+        let voice = render_voice(sample, source, &note, channels);
         let start = (index as f64 * frames_per_step).round() as usize;
-        dsp::mix_into(&mut buffer, &voice, start);
+        dsp::mix_into_multi(&mut buffer, &voice, start, channels as usize);
     }
     dsp::normalize(&mut buffer);
-    Some(AudioBuffer::new(buffer, OUTPUT_SAMPLE_RATE))
+    Some(AudioBuffer::new_multi(buffer, OUTPUT_SAMPLE_RATE, channels))
 }
 
-/// Sums the tracks into a single mono buffer, skipping the ones flagged in
-/// `muted` (missing entries count as not muted), and normalizes the result
-/// if its peak exceeds `1.0`.
+/// Sums the tracks into a single buffer, skipping the ones flagged in
+/// `muted` (missing entries count as not muted), and normalizes the
+/// result if its peak exceeds `1.0`. Works at whatever channel count the
+/// tracks themselves share (they must all share one — see
+/// [`render_tracks_multi`]): summing an interleaved buffer position by
+/// position, from the start, is already channel-count agnostic.
 pub fn mix_tracks(tracks: &[TrackBuffer], muted: &[bool]) -> Vec<f32> {
     let mut master: Vec<f32> = Vec::new();
     for (i, track) in tracks.iter().enumerate() {
@@ -182,6 +226,95 @@ mod tests {
 
         let none = mix_tracks(&tracks, &[true, true]);
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn render_tracks_multi_with_one_channel_matches_render_tracks() {
+        let composition = parse_composition(SONG).unwrap();
+        let arrangement = resolve(&composition);
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 10], OUTPUT_SAMPLE_RATE));
+        let sps = seconds_per_step(&composition.metadata);
+
+        let plain = render_tracks(&arrangement, &composition.samples, &audio, sps);
+        let via_multi = render_tracks_multi(&arrangement, &composition.samples, &audio, sps, 1);
+        assert_eq!(plain.len(), via_multi.len());
+        for (a, b) in plain.iter().zip(&via_multi) {
+            assert_eq!(a.track_id, b.track_id);
+            assert_eq!(a.audio.data, b.audio.data);
+            assert_eq!(b.audio.channels(), 1);
+        }
+    }
+
+    #[test]
+    fn a_mono_voice_is_upmixed_to_the_track_s_channel_count() {
+        let composition = parse_composition(SONG).unwrap();
+        let arrangement = resolve(&composition);
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 10], OUTPUT_SAMPLE_RATE)); // mono
+        let sps = seconds_per_step(&composition.metadata);
+
+        let tracks = render_tracks_multi(&arrangement, &composition.samples, &audio, sps, 2);
+        assert_eq!(tracks[0].audio.channels(), 2);
+        // Frame 0 (samples 0 and 1) is the mono 0.5 duplicated to L and R.
+        assert_eq!(&tracks[0].audio.data[0..2], &[0.5, 0.5]);
+    }
+
+    #[test]
+    fn a_stereo_voice_keeps_its_channels_distinct_through_rendering() {
+        let composition = parse_composition(SONG).unwrap();
+        let arrangement = resolve(&composition);
+        let mut audio = HashMap::new();
+        // Stereo source: left is 1.0, right is 0.0, every frame.
+        let stereo_data: Vec<f32> = (0..10).flat_map(|_| [1.0, 0.0]).collect();
+        audio.insert("s".to_string(), AudioBuffer::new_multi(stereo_data, OUTPUT_SAMPLE_RATE, 2));
+        let sps = seconds_per_step(&composition.metadata);
+
+        let tracks = render_tracks_multi(&arrangement, &composition.samples, &audio, sps, 2);
+        assert_eq!(tracks[0].audio.channels(), 2);
+        assert_eq!(&tracks[0].audio.data[0..2], &[1.0, 0.0]);
+    }
+
+    #[test]
+    fn mono_and_stereo_tracks_mix_together_once_both_are_upmixed() {
+        let composition = parse_composition(SONG).unwrap();
+        let arrangement = resolve(&composition);
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 10], OUTPUT_SAMPLE_RATE)); // mono
+        let sps = seconds_per_step(&composition.metadata);
+
+        // Both of the song's tracks use the same (mono) sample here, but
+        // rendered at channels: 2 — this is exactly what a real mixed
+        // mono+stereo composition looks like once render_tracks_multi has
+        // upmixed the mono one: every TrackBuffer ends up at the same
+        // (wider) channel count, so mix_tracks can sum them unchanged.
+        let tracks = render_tracks_multi(&arrangement, &composition.samples, &audio, sps, 2);
+        let master = mix_tracks(&tracks, &[]);
+        // Two identical upmixed 0.5 voices sum to 1.0 on both channels.
+        assert_eq!(&master[0..2], &[1.0, 1.0]);
+    }
+
+    #[test]
+    fn render_pattern_multi_with_one_channel_matches_render_pattern() {
+        let c = parse_composition(SONG).unwrap();
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 100], 44100));
+        let sps = 0.01;
+
+        let plain = render_pattern(&c.patterns[0], &c.samples, &audio, sps).unwrap();
+        let via_multi = render_pattern_multi(&c.patterns[0], &c.samples, &audio, sps, 1).unwrap();
+        assert_eq!(plain.data, via_multi.data);
+        assert_eq!(via_multi.channels(), 1);
+    }
+
+    #[test]
+    fn render_pattern_multi_upmixes_a_mono_sample() {
+        let c = parse_composition(SONG).unwrap();
+        let mut audio = HashMap::new();
+        audio.insert("s".to_string(), AudioBuffer::new(vec![0.5; 100], 44100));
+        let buf = render_pattern_multi(&c.patterns[0], &c.samples, &audio, 0.01, 2).unwrap();
+        assert_eq!(buf.channels(), 2);
+        assert!(buf.data.iter().step_by(2).zip(buf.data.iter().skip(1).step_by(2)).all(|(l, r)| l == r));
     }
 
     #[test]

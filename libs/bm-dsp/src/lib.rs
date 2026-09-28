@@ -77,6 +77,25 @@ pub fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
+/// The opposite of [`downmix`]: widens `input` (interleaved, `from_channels`
+/// channels) up to `to_channels` by repeating each frame's channels in
+/// order until it fills the wider frame — mono (`from_channels: 1`) up to
+/// any count duplicates the single value into every channel, which is the
+/// only case bit-music needs today (mixing a mono sample's voice into an
+/// otherwise stereo track). A no-op if the two counts already match, or if
+/// `to_channels` isn't wider.
+pub fn upmix(input: &[f32], from_channels: usize, to_channels: usize) -> Vec<f32> {
+    let from_channels = from_channels.max(1);
+    let to_channels = to_channels.max(1);
+    if from_channels >= to_channels {
+        return input.to_vec();
+    }
+    input
+        .chunks(from_channels)
+        .flat_map(|frame| frame.iter().cycle().take(to_channels).copied().collect::<Vec<_>>())
+        .collect()
+}
+
 /// Resamples `input` according to `ratio` (linear interpolation):
 /// - `ratio > 1.0` -> faster, higher-pitched playback, shorter buffer.
 /// - `ratio < 1.0` -> slower, lower-pitched playback, longer buffer.
@@ -205,6 +224,27 @@ mod tests {
     fn downmix_averages_stereo_channels() {
         // L=1.0, R=0.0 -> mono = 0.5, over two frames.
         assert_eq!(downmix(&[1.0, 0.0, 0.5, 0.5], 2), vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn upmix_duplicates_mono_into_every_channel() {
+        assert_eq!(upmix(&[0.5, -0.25], 1, 2), vec![0.5, 0.5, -0.25, -0.25]);
+        assert_eq!(upmix(&[0.5, -0.25], 1, 3), vec![0.5, 0.5, 0.5, -0.25, -0.25, -0.25]);
+    }
+
+    #[test]
+    fn upmix_is_a_no_op_when_not_actually_widening() {
+        let same = vec![0.1, 0.2, 0.3, 0.4];
+        assert_eq!(upmix(&same, 2, 2), same);
+        // Narrowing is not upmix's job: left untouched.
+        assert_eq!(upmix(&same, 2, 1), same);
+    }
+
+    #[test]
+    fn downmix_then_upmix_and_upmix_then_downmix_round_trip_mono() {
+        let mono = vec![0.2, -0.4, 0.6];
+        let stereo = upmix(&mono, 1, 2);
+        assert_eq!(downmix(&stereo, 2), mono);
     }
 
     #[test]
