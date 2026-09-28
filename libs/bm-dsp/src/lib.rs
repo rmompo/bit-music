@@ -9,16 +9,45 @@
 //! you sped up or slowed down a tape. This changes pitch and duration
 //! together; there is no time-stretching that preserves duration.
 
-/// A block of decoded mono audio, normalized to `[-1.0, 1.0]`.
-#[derive(Debug, Clone, Default)]
+/// A block of decoded audio, normalized to `[-1.0, 1.0]`, interleaved when
+/// [`channels`](Self::channels) is more than 1 (frame 0's channels, then
+/// frame 1's, ...) — the same layout `hound` itself uses.
+#[derive(Debug, Clone)]
 pub struct AudioBuffer {
     pub data: Vec<f32>,
     pub sample_rate: u32,
+    channels: u16,
+}
+
+impl Default for AudioBuffer {
+    /// Empty, mono: `channels` defaults to `1`, not `0` (an unplayable,
+    /// nonsensical buffer), so a default value is still a valid buffer.
+    fn default() -> Self {
+        Self { data: Vec::new(), sample_rate: 0, channels: 1 }
+    }
 }
 
 impl AudioBuffer {
+    /// A mono buffer.
     pub fn new(data: Vec<f32>, sample_rate: u32) -> Self {
-        Self { data, sample_rate }
+        Self { data, sample_rate, channels: 1 }
+    }
+
+    /// A buffer of `channels` interleaved channels (`channels: 1` is the
+    /// same as [`new`](Self::new); `0` is treated as `1`, since a buffer
+    /// always has at least one channel to be meaningful).
+    pub fn new_multi(data: Vec<f32>, sample_rate: u32, channels: u16) -> Self {
+        Self { data, sample_rate, channels: channels.max(1) }
+    }
+
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    /// Number of sample frames (`data.len() / channels`, so it is the same
+    /// as `data.len()` for a mono buffer).
+    pub fn frames(&self) -> usize {
+        self.data.len() / self.channels as usize
     }
 
     /// Duration in seconds (`0.0` if the sample rate is zero).
@@ -26,7 +55,7 @@ impl AudioBuffer {
         if self.sample_rate == 0 {
             0.0
         } else {
-            self.data.len() as f64 / self.sample_rate as f64
+            self.frames() as f64 / self.sample_rate as f64
         }
     }
 }
@@ -77,6 +106,33 @@ pub fn resample(input: &[f32], ratio: f64) -> Vec<f32> {
     output
 }
 
+/// The same as [`resample`], on interleaved `input` of `channels` channels
+/// (see [`AudioBuffer`]): each channel is resampled on its own — the
+/// interpolation never blends samples from different channels together —
+/// then the results are re-interleaved. `channels: 1` (or `0`, treated as
+/// `1`) delegates straight to [`resample`], so it behaves identically for
+/// mono input.
+pub fn resample_multi(input: &[f32], ratio: f64, channels: usize) -> Vec<f32> {
+    let channels = channels.max(1);
+    if channels == 1 {
+        return resample(input, ratio);
+    }
+
+    let per_channel: Vec<Vec<f32>> = (0..channels)
+        .map(|c| input.iter().skip(c).step_by(channels).copied().collect())
+        .collect();
+    let resampled: Vec<Vec<f32>> = per_channel.iter().map(|ch| resample(ch, ratio)).collect();
+
+    let frames = resampled.first().map_or(0, Vec::len);
+    let mut output = Vec::with_capacity(frames * channels);
+    for i in 0..frames {
+        for ch in &resampled {
+            output.push(ch[i]);
+        }
+    }
+    output
+}
+
 /// Sums `voice` into `master` starting at frame `start`, extending
 /// `master` with silence if needed.
 pub fn mix_into(master: &mut Vec<f32>, voice: &[f32], start: usize) {
@@ -87,6 +143,16 @@ pub fn mix_into(master: &mut Vec<f32>, voice: &[f32], start: usize) {
     for (i, &value) in voice.iter().enumerate() {
         master[start + i] += value;
     }
+}
+
+/// The same as [`mix_into`], addressed by frame instead of by sample:
+/// sums interleaved `voice` (`channels` channels) into interleaved
+/// `master` starting at frame `start_frame`. `mix_into` is already
+/// channel-layout agnostic (it only sums sample-for-sample at an offset),
+/// so this is exactly `mix_into` with the offset converted from frames to
+/// samples; `channels: 1` behaves identically to `mix_into`.
+pub fn mix_into_multi(master: &mut Vec<f32>, voice: &[f32], start_frame: usize, channels: usize) {
+    mix_into(master, voice, start_frame * channels.max(1));
 }
 
 /// Absolute peak of a buffer (`0.0` for an empty one).
@@ -139,6 +205,78 @@ mod tests {
     fn downmix_averages_stereo_channels() {
         // L=1.0, R=0.0 -> mono = 0.5, over two frames.
         assert_eq!(downmix(&[1.0, 0.0, 0.5, 0.5], 2), vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn new_multi_with_one_channel_matches_new() {
+        let mono = AudioBuffer::new(vec![0.1, 0.2, 0.3], 44100);
+        let same = AudioBuffer::new_multi(vec![0.1, 0.2, 0.3], 44100, 1);
+        assert_eq!(mono.channels(), same.channels());
+        assert_eq!(mono.frames(), same.frames());
+        assert_eq!(mono.duration_seconds(), same.duration_seconds());
+        // 0 channels makes no sense for a buffer: treated as 1.
+        let zero = AudioBuffer::new_multi(vec![0.1, 0.2, 0.3], 44100, 0);
+        assert_eq!(zero.channels(), 1);
+    }
+
+    #[test]
+    fn frames_and_duration_account_for_the_channel_count() {
+        // 3 frames of stereo (6 samples) at 44100 Hz.
+        let stereo = AudioBuffer::new_multi(vec![0.0; 6], 44100, 2);
+        assert_eq!(stereo.frames(), 3);
+        assert!((stereo.duration_seconds() - 3.0 / 44100.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn default_audio_buffer_is_empty_mono_not_zero_channels() {
+        let default = AudioBuffer::default();
+        assert_eq!(default.channels(), 1);
+        assert!(default.data.is_empty());
+    }
+
+    #[test]
+    fn resample_multi_with_one_channel_matches_resample() {
+        let input = vec![0.0, 0.25, 0.5, 0.75, 1.0, 0.9, 0.8];
+        assert_eq!(resample_multi(&input, 1.7, 1), resample(&input, 1.7));
+        // channels: 0 is treated as 1, same as AudioBuffer::new_multi.
+        assert_eq!(resample_multi(&input, 1.7, 0), resample(&input, 1.7));
+    }
+
+    #[test]
+    fn resample_multi_never_blends_channels_together() {
+        // Left is a rising ramp, right is a falling one: if resample_multi
+        // blended samples across the interleave boundary, both channels
+        // would end up with values from the other.
+        let left: Vec<f32> = (0..20).map(|i| i as f32 / 19.0).collect();
+        let right: Vec<f32> = left.iter().map(|v| 1.0 - v).collect();
+        let interleaved: Vec<f32> = left.iter().zip(&right).flat_map(|(&l, &r)| [l, r]).collect();
+
+        let out = resample_multi(&interleaved, 1.3, 2);
+        let out_left: Vec<f32> = out.iter().step_by(2).copied().collect();
+        let out_right: Vec<f32> = out.iter().skip(1).step_by(2).copied().collect();
+
+        // Each channel resampled on its own matches resampling it directly.
+        assert_eq!(out_left, resample(&left, 1.3));
+        assert_eq!(out_right, resample(&right, 1.3));
+        // And the two channels stay distinct (not blended into each other).
+        assert_ne!(out_left, out_right);
+    }
+
+    #[test]
+    fn mix_into_multi_with_one_channel_matches_mix_into() {
+        let mut a = vec![0.1, 0.1, 0.1, 0.1];
+        let mut b = vec![0.1, 0.1, 0.1, 0.1];
+        mix_into(&mut a, &[0.5, 0.5], 1);
+        mix_into_multi(&mut b, &[0.5, 0.5], 1, 1);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn mix_into_multi_is_addressed_by_frame_not_by_sample() {
+        // Stereo: frame 1 starts at sample offset 2 (frame * channels).
+        let mut master = vec![0.0; 6]; // 3 stereo frames
+        mix_into_multi(&mut master, &[0.5, 0.25], 1, 2);
+        assert_eq!(master, vec![0.0, 0.0, 0.5, 0.25, 0.0, 0.0]);
     }
 
     #[test]
