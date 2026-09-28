@@ -39,6 +39,29 @@ const NO_SEEK: usize = usize::MAX;
 /// Sentinel meaning "this preview is not playing".
 const IDLE: usize = usize::MAX;
 
+/// Ceiling on how many channels a mix can have, so [`Core::fill`] (the
+/// real-time audio callback) can accumulate a frame in a fixed-size stack
+/// array instead of allocating. Nothing in bit-music produces more than 2
+/// today; this leaves generous headroom without ever allocating.
+const MAX_MIX_CHANNELS: usize = 8;
+
+/// The value for one device output channel, given a frame already mixed
+/// at `mix_frame.len()` channels: passes each mix channel straight
+/// through when the device has at least as many; averages every mix
+/// channel together when it does not (e.g. a stereo mix on a mono
+/// device); repeats the one channel of a mono mix everywhere (today's
+/// behavior, and the only case when `mix_frame.len() == 1`).
+fn device_channel_value(mix_frame: &[f32], device_channels: usize, device_ch: usize) -> f32 {
+    let mix_channels = mix_frame.len();
+    if mix_channels <= 1 {
+        mix_frame.first().copied().unwrap_or(0.0)
+    } else if device_channels >= mix_channels {
+        mix_frame.get(device_ch).copied().unwrap_or(0.0)
+    } else {
+        mix_frame.iter().sum::<f32>() / mix_channels as f32
+    }
+}
+
 /// Length of the window shown by the scope methods, in seconds (half of it
 /// on each side of the current position).
 const SCOPE_SECONDS: f64 = 0.12;
@@ -66,13 +89,40 @@ pub fn scope_window(data: &[f32], center: usize, half: usize, points: usize) -> 
         .collect()
 }
 
+/// One [`scope_window`] per channel of interleaved `data` (`mix_channels`
+/// channels), each scaled by `gain`; a mono buffer (`mix_channels: 1`)
+/// gives exactly one, so this is the multi-channel counterpart callers
+/// widen a single-channel scope into.
+pub fn scope_channels(
+    data: &[f32],
+    mix_channels: usize,
+    center: usize,
+    half: usize,
+    points: usize,
+    gain: f32,
+) -> Vec<Vec<f32>> {
+    let mix_channels = mix_channels.max(1);
+    (0..mix_channels)
+        .map(|ch| {
+            let channel_data: Vec<f32> = data.iter().skip(ch).step_by(mix_channels).copied().collect();
+            scope_window(&channel_data, center, half, points).into_iter().map(|v| v * gain).collect()
+        })
+        .collect()
+}
+
 /// State shared between the controlling thread and the audio callback.
 /// Everything mutable is atomic; the audio data is immutable.
 struct Core {
-    /// One mono buffer per track, already at the device sample rate.
+    /// One interleaved buffer per track, [`mix_channels`](Self::mix_channels)
+    /// channels each, already at the device sample rate.
     tracks: Vec<Vec<f32>>,
+    /// Every track and preview buffer is at this many channels (the widest
+    /// among them all — see [`Engine::with_previews`], which upmixes a
+    /// narrower one to match): `1` behaves exactly as before.
+    mix_channels: usize,
     muted: Vec<AtomicBool>,
-    /// Short one-shot sounds (sample previews), already at the device rate.
+    /// Short one-shot sounds (sample previews), already at the device rate
+    /// and at `mix_channels` channels.
     previews: Vec<Vec<f32>>,
     /// Next frame of each preview, or `IDLE`.
     preview_pos: Vec<AtomicUsize>,
@@ -94,11 +144,18 @@ struct Core {
 }
 
 impl Core {
-    fn new(tracks: Vec<Vec<f32>>, previews: Vec<Vec<f32>>) -> Self {
-        let len = tracks.iter().map(Vec::len).max().unwrap_or(0);
+    /// `tracks` and `previews` must already be interleaved at
+    /// `mix_channels` channels each (narrower buffers upmixed by the
+    /// caller — see [`Engine::with_previews`]).
+    fn new(tracks: Vec<Vec<f32>>, previews: Vec<Vec<f32>>, mix_channels: usize) -> Self {
+        let mix_channels = mix_channels.clamp(1, MAX_MIX_CHANNELS);
+        let len = tracks.iter().map(|t| t.len() / mix_channels).max().unwrap_or(0);
 
         // Same normalization the offline mix uses: one fixed gain from the
         // peak of the full mix, so nothing clips when all tracks play.
+        // mix_into sums an interleaved buffer position by position, which
+        // is already channel-count agnostic as long as every track shares
+        // one — true here by construction.
         let mut full_mix = Vec::new();
         for track in &tracks {
             dsp::mix_into(&mut full_mix, track, 0);
@@ -109,6 +166,7 @@ impl Core {
         let preview_pos = previews.iter().map(|_| AtomicUsize::new(IDLE)).collect();
         Self {
             tracks,
+            mix_channels,
             muted,
             previews,
             preview_pos,
@@ -124,9 +182,11 @@ impl Core {
         }
     }
 
-    /// Fills an interleaved output block. Called from the audio callback:
-    /// no locks, no allocation.
-    fn fill<T: Sample + FromSample<f32>>(&self, out: &mut [T], channels: usize) {
+    /// Fills an interleaved output block of `device_channels` channels.
+    /// Called from the audio callback: no locks, no allocation (the
+    /// per-frame mix accumulates in a fixed-size array — see
+    /// [`MAX_MIX_CHANNELS`] — never a `Vec`).
+    fn fill<T: Sample + FromSample<f32>>(&self, out: &mut [T], device_channels: usize) {
         let requested = self.seek_request.swap(NO_SEEK, Ordering::Relaxed);
         let mut pos = if requested != NO_SEEK {
             requested.min(self.len)
@@ -136,17 +196,24 @@ impl Core {
         let mut playing = self.playing.load(Ordering::Relaxed);
         let looping = self.looping.load(Ordering::Relaxed);
         let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
+        let mix_channels = self.mix_channels;
+        let device_channels = device_channels.max(1);
 
-        for frame in out.chunks_mut(channels.max(1)) {
-            let mut value = 0.0f32;
+        for frame in out.chunks_mut(device_channels) {
+            let mut mix_frame = [0.0f32; MAX_MIX_CHANNELS];
+            let mix_frame = &mut mix_frame[..mix_channels];
 
             if playing && pos < self.len {
                 for (i, track) in self.tracks.iter().enumerate() {
                     if !self.muted[i].load(Ordering::Relaxed) {
-                        value += track.get(pos).copied().unwrap_or(0.0);
+                        for (ch, slot) in mix_frame.iter_mut().enumerate() {
+                            *slot += track.get(pos * mix_channels + ch).copied().unwrap_or(0.0);
+                        }
                     }
                 }
-                value *= self.gain;
+                for slot in mix_frame.iter_mut() {
+                    *slot *= self.gain;
+                }
                 pos += 1;
             }
 
@@ -161,17 +228,23 @@ impl Core {
             }
 
             // Sample previews sound on top of the transport, even when paused.
-            for (buf, pos) in self.previews.iter().zip(&self.preview_pos) {
-                let p = pos.load(Ordering::Relaxed);
+            for (buf, preview_pos) in self.previews.iter().zip(&self.preview_pos) {
+                let p = preview_pos.load(Ordering::Relaxed);
                 if p != IDLE {
-                    value += buf.get(p).copied().unwrap_or(0.0);
-                    pos.store(if p + 1 < buf.len() { p + 1 } else { IDLE }, Ordering::Relaxed);
+                    for (ch, slot) in mix_frame.iter_mut().enumerate() {
+                        *slot += buf.get(p * mix_channels + ch).copied().unwrap_or(0.0);
+                    }
+                    let preview_frames = buf.len() / mix_channels;
+                    preview_pos.store(if p + 1 < preview_frames { p + 1 } else { IDLE }, Ordering::Relaxed);
                 }
             }
 
-            let value = (value * volume).clamp(-1.0, 1.0);
-            for sample in frame.iter_mut() {
-                *sample = T::from_sample(value);
+            for slot in mix_frame.iter_mut() {
+                *slot = (*slot * volume).clamp(-1.0, 1.0);
+            }
+
+            for (device_ch, sample) in frame.iter_mut().enumerate() {
+                *sample = T::from_sample(device_channel_value(mix_frame, device_channels, device_ch));
             }
         }
 
@@ -227,28 +300,48 @@ impl Engine {
 
         let supported = device.default_output_config()?;
         let sample_format = supported.sample_format();
-        let channels = supported.channels() as usize;
+        let device_channels = supported.channels() as usize;
         let device_sample_rate = supported.sample_rate().0;
         let stream_config: StreamConfig = supported.config();
 
-        // Bring every buffer to the device sample rate up front (no pitch
-        // change: same resampling math, ratio = source rate / device rate).
+        let tracks: Vec<&AudioBuffer> = tracks.into_iter().collect();
+        let previews: Vec<&AudioBuffer> = previews.into_iter().collect();
+        // The widest channel count among everything that can sound (a
+        // track or a preview) — every buffer below is upmixed to this, so
+        // Core can index them all the same way. `1` (nothing but mono
+        // buffers) reproduces today's behavior exactly.
+        let mix_channels = tracks
+            .iter()
+            .chain(&previews)
+            .map(|t| t.channels() as usize)
+            .max()
+            .unwrap_or(1);
+
+        // Brings `t` to the device sample rate (no pitch change: same
+        // resampling math, ratio = source rate / device rate — done per
+        // channel, at `t`'s own channel count, so channels are never
+        // blended together), then up to `mix_channels` channels.
         let to_device = |t: &AudioBuffer| -> Vec<f32> {
-            if t.sample_rate == device_sample_rate {
+            let resampled = if t.sample_rate == device_sample_rate {
                 t.data.clone()
             } else {
-                dsp::resample(&t.data, t.sample_rate as f64 / device_sample_rate as f64)
-            }
+                dsp::resample_multi(
+                    &t.data,
+                    t.sample_rate as f64 / device_sample_rate as f64,
+                    t.channels() as usize,
+                )
+            };
+            dsp::upmix(&resampled, t.channels() as usize, mix_channels)
         };
-        let device_tracks: Vec<Vec<f32>> = tracks.into_iter().map(to_device).collect();
-        let device_previews: Vec<Vec<f32>> = previews.into_iter().map(to_device).collect();
+        let device_tracks: Vec<Vec<f32>> = tracks.iter().map(|t| to_device(t)).collect();
+        let device_previews: Vec<Vec<f32>> = previews.iter().map(|t| to_device(t)).collect();
 
-        let core = Arc::new(Core::new(device_tracks, device_previews));
+        let core = Arc::new(Core::new(device_tracks, device_previews, mix_channels));
 
         let stream = match sample_format {
-            SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, channels, &core)?,
-            SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, channels, &core)?,
-            SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, channels, &core)?,
+            SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, device_channels, &core)?,
+            SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, device_channels, &core)?,
+            SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, device_channels, &core)?,
             other => return Err(PlaybackError::UnsupportedSampleFormat(other)),
         };
         stream.play()?;
@@ -327,26 +420,45 @@ impl Engine {
     }
 
     /// What track `index` is playing around the current position, as
-    /// `points` values for drawing an oscilloscope (scaled by the mix gain
-    /// only — *not* the master volume, so turning the app's volume down
-    /// never shrinks the trace). Empty while nothing is playing or when the
-    /// track is muted.
+    /// `points` values for drawing an oscilloscope — its first channel
+    /// only (identical to today for a mono track; see
+    /// [`track_scope_multi`](Self::track_scope_multi) for every channel of
+    /// a multi-channel one). Scaled by the mix gain only — *not* the
+    /// master volume, so turning the app's volume down never shrinks the
+    /// trace. Empty while nothing is playing or when the track is muted.
     pub fn track_scope(&self, index: usize, points: usize) -> Vec<f32> {
+        self.track_scope_multi(index, points).into_iter().next().unwrap_or_default()
+    }
+
+    /// The same as [`track_scope`](Self::track_scope), but every channel
+    /// (one inner `Vec` per channel, in source order; a mono track gives
+    /// exactly one, matching `track_scope`).
+    pub fn track_scope_multi(&self, index: usize, points: usize) -> Vec<Vec<f32>> {
         if !self.is_playing() || self.is_muted(index) {
             return Vec::new();
         }
         let Some(track) = self.core.tracks.get(index) else {
             return Vec::new();
         };
-        scope_window(track, self.core.current_position(), self.scope_half(), points)
-            .into_iter()
-            .map(|v| v * self.core.gain)
-            .collect()
+        scope_channels(
+            track,
+            self.core.mix_channels,
+            self.core.current_position(),
+            self.scope_half(),
+            points,
+            self.core.gain,
+        )
     }
 
     /// The same for preview `index`: empty unless it is sounding. Not
     /// scaled by the master volume either, for the same reason.
     pub fn preview_scope(&self, index: usize, points: usize) -> Vec<f32> {
+        self.preview_scope_multi(index, points).into_iter().next().unwrap_or_default()
+    }
+
+    /// The same as [`preview_scope`](Self::preview_scope), but every
+    /// channel — see [`track_scope_multi`](Self::track_scope_multi).
+    pub fn preview_scope_multi(&self, index: usize, points: usize) -> Vec<Vec<f32>> {
         let Some(pos) = self.core.preview_pos.get(index) else {
             return Vec::new();
         };
@@ -354,7 +466,7 @@ impl Engine {
         if position == IDLE {
             return Vec::new();
         }
-        scope_window(&self.core.previews[index], position, self.scope_half(), points)
+        scope_channels(&self.core.previews[index], self.core.mix_channels, position, self.scope_half(), points, 1.0)
     }
 
     fn scope_half(&self) -> usize {
@@ -437,7 +549,11 @@ mod tests {
     use super::*;
 
     fn core(tracks: Vec<Vec<f32>>) -> Core {
-        Core::new(tracks, Vec::new())
+        Core::new(tracks, Vec::new(), 1)
+    }
+
+    fn core_multi(tracks: Vec<Vec<f32>>, mix_channels: usize) -> Core {
+        Core::new(tracks, Vec::new(), mix_channels)
     }
 
     /// Runs one callback block over `frames` frames of `channels` channels.
@@ -524,6 +640,29 @@ mod tests {
     }
 
     #[test]
+    fn scope_channels_with_one_channel_matches_scope_window() {
+        let data = [0.0, 0.5, -0.9, 0.2, 0.0, 0.0];
+        let mono = scope_channels(&data, 1, 2, 4, 4, 1.0);
+        assert_eq!(mono.len(), 1);
+        assert_eq!(mono[0], scope_window(&data, 2, 4, 4));
+    }
+
+    #[test]
+    fn scope_channels_de_interleaves_before_windowing_and_scales_by_gain() {
+        // Stereo: left is a rising ramp, right is silence throughout.
+        let left = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        let interleaved: Vec<f32> = left.iter().flat_map(|&l| [l, 0.0]).collect();
+
+        let channels = scope_channels(&interleaved, 2, 3, 3, 3, 2.0);
+        assert_eq!(channels.len(), 2);
+        // Left, scaled by gain 2.0, matches windowing the left channel alone.
+        let expected_left: Vec<f32> = scope_window(&left, 3, 3, 3).into_iter().map(|v| v * 2.0).collect();
+        assert_eq!(channels[0], expected_left);
+        // Right is silent throughout.
+        assert!(channels[1].iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
     fn volume_scales_the_output() {
         let c = core(vec![vec![0.5; 4]]);
         c.playing.store(true, Ordering::Relaxed);
@@ -533,7 +672,7 @@ mod tests {
 
     #[test]
     fn a_preview_sounds_once_while_the_transport_is_paused() {
-        let c = Core::new(vec![vec![0.0; 8]], vec![vec![0.1, 0.2]]);
+        let c = Core::new(vec![vec![0.0; 8]], vec![vec![0.1, 0.2]], 1);
         // Idle until triggered.
         assert_eq!(block(&c, 2, 1), vec![0.0, 0.0]);
         c.preview_pos[0].store(0, Ordering::Relaxed);
@@ -549,9 +688,49 @@ mod tests {
 
     #[test]
     fn a_preview_is_mixed_with_the_transport_and_never_clips() {
-        let c = Core::new(vec![vec![0.5; 2]], vec![vec![0.75; 2]]);
+        let c = Core::new(vec![vec![0.5; 2]], vec![vec![0.75; 2]], 1);
         c.playing.store(true, Ordering::Relaxed);
         c.preview_pos[0].store(0, Ordering::Relaxed);
         assert_eq!(block(&c, 1, 1), vec![1.0]);
+    }
+
+    #[test]
+    fn stereo_tracks_mix_independently_per_channel_on_a_stereo_device() {
+        // Track A: L=0.2, R=0.1 every frame. Track B: L=0.1, R=0.2.
+        let a: Vec<f32> = (0..4).flat_map(|_| [0.2, 0.1]).collect();
+        let b: Vec<f32> = (0..4).flat_map(|_| [0.1, 0.2]).collect();
+        let c = core_multi(vec![a, b], 2);
+        c.playing.store(true, Ordering::Relaxed);
+        // One stereo frame: L = 0.2+0.1 = 0.3, R = 0.1+0.2 = 0.3 (peak 0.3, no gain).
+        assert_eq!(block(&c, 1, 2), vec![0.3, 0.3]);
+    }
+
+    #[test]
+    fn a_stereo_mix_averages_down_to_a_mono_device() {
+        // L=1.0, R=0.0 every frame: averaged, a mono device hears 0.5.
+        let track: Vec<f32> = (0..2).flat_map(|_| [1.0, 0.0]).collect();
+        let c = core_multi(vec![track], 2);
+        c.playing.store(true, Ordering::Relaxed);
+        assert_eq!(block(&c, 2, 1), vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn a_stereo_mix_passes_through_to_a_wider_device_and_silences_the_rest() {
+        let track: Vec<f32> = (0..2).flat_map(|_| [0.6, 0.3]).collect();
+        let c = core_multi(vec![track], 2);
+        c.playing.store(true, Ordering::Relaxed);
+        // 4-channel device: L, R, then silence on the extra two channels.
+        assert_eq!(block(&c, 1, 4), vec![0.6, 0.3, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_mono_mix_still_duplicates_to_every_device_channel_when_stereo_is_supported() {
+        // Guards that Core's new per-channel path reproduces the original,
+        // already-tested mono behavior exactly when mix_channels is 1
+        // (same scenario as playing_sums_tracks_and_replicates_mono_to_every_channel,
+        // via core_multi instead of the plain mono `core` helper).
+        let c = core_multi(vec![vec![0.25; 8], vec![0.25; 8]], 1);
+        c.playing.store(true, Ordering::Relaxed);
+        assert_eq!(block(&c, 2, 2), vec![0.5, 0.5, 0.5, 0.5]);
     }
 }
